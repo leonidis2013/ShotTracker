@@ -246,7 +246,22 @@ const until = async (fn, ms = 8000) => { const t = Date.now(); while (Date.now()
     assert.ok(cal.split('\r\n').every(l => Buffer.byteLength(l) <= 75), 'folded lines');
     assert.strictEqual((await fetch(base + '/ics/' + 'x'.repeat(32) + '.ics')).status, 404);
 
-    // ----- digest email -----
+    // ----- NFC tags -----
+    r = await A('POST', '/api/tags', { name: 'Fridge', action: 'log_schedule', target_id: ms }); assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+    const tg = r.body; assert.match(tg.url, /^https:\/\/shots\.home\.lan\/t\/[A-Za-z0-9]{12}$/); assert.match(tg.label, /Kid · Monthly/);
+    r = await fetch(base + '/t/' + tg.code, { redirect: 'manual' }); assert.strictEqual(r.status, 302); assert.strictEqual(r.headers.get('location'), '/#tag/' + tg.code);
+    assert.strictEqual((await fetch(base + '/api/tags/open/' + tg.code)).status, 401, 'signed-in users only');
+    r = await A('GET', '/api/tags/open/' + tg.code); assert.deepStrictEqual(r.body, { name: 'Fridge', hash: 'log/' + ms });
+    r = await A('GET', '/api/tags'); assert.strictEqual(r.body.tags[0].taps, 1); assert.strictEqual(r.body.tags[0].last_user, 'Admin'); assert.ok(r.body.choices.schedules.length >= 3);
+    r = await A('PUT', '/api/tags/' + tg.id, { action: 'receive', target_id: hum }); assert.strictEqual(r.body.label, 'Receive shipment: Dad · Humira');
+    assert.strictEqual((await A('GET', '/api/tags/open/' + tg.code)).body.hash, 'receive/' + hum, 'retarget without rewriting');
+    assert.strictEqual((await V('GET', '/api/tags/open/' + tg.code)).status, 404, 'viewer cannot open Dad');
+    assert.strictEqual((await V('GET', '/api/tags')).status, 403);
+    assert.strictEqual((await A('POST', '/api/tags', { name: 'Bad', action: 'patient', target_id: 99999 })).status, 400);
+    r = await A('POST', '/api/tags', { name: 'Kitchen', action: 'today' }); assert.strictEqual((await P('GET', '/api/tags/open/' + r.body.code)).body.hash, 'today', 'patient can open Today tag');
+    assert.strictEqual((await A('GET', '/api/tags/open/nosuchtag1')).status, 404);
+
+
     await A('PUT', '/api/me/prefs', { email_digest: true }); await A('PUT', '/api/settings', { digest_time: '00:00' });
     await until(() => mails.find(m => /Subject: ShotTracker: /.test(m.data)));
 

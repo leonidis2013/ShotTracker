@@ -97,6 +97,9 @@ const MIGRATIONS = [
      channel TEXT NOT NULL, sent_at TEXT NOT NULL, result TEXT, UNIQUE(schedule_id, due_at, user_id, step, channel));
    CREATE TABLE snoozes(schedule_id INTEGER NOT NULL, due_at TEXT NOT NULL, until INTEGER NOT NULL, PRIMARY KEY(schedule_id, due_at));
    CREATE TABLE alert_log(key TEXT NOT NULL, user_id INTEGER NOT NULL, sent_at INTEGER NOT NULL, PRIMARY KEY(key, user_id));`,
+  // 1.1: NFC tags that open the app to a chosen screen
+  `CREATE TABLE nfc_tags(id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, action TEXT NOT NULL, target_id INTEGER,
+     taps INTEGER NOT NULL DEFAULT 0, last_tap TEXT, last_user INTEGER, ${STAMPS});`,
 ];
 {
   const have = +(db.prepare(`SELECT value FROM meta WHERE key='schema'`).get()?.value || 0);
@@ -742,6 +745,37 @@ async function backupTick(n, c) {
   try { makeBackup(c.backup_pass, 'auto'); } catch (e) { console.error('backup:', e.message); }
 }
 
+// ---------- NFC tags ----------
+// A tag holds only a short link (/t/<code>). The code isn't a password: opening it still needs a signed-in user,
+// and what it opens is checked against that user's access. Changing a tag here never needs the tag rewritten.
+const TAG_ACTIONS = ['today', 'log_schedule', 'log_med', 'patient', 'receive'];
+function tagTarget(t) {
+  if (t.action === 'today') return { pid: null, label: 'Open Today', hash: 'today' };
+  if (t.action === 'log_schedule') { const sc = getRow('schedules', t.target_id), m = sc && getRow('medications', sc.medication_id), p = m && getRow('patients', m.patient_id); return p && { pid: p.id, label: `Log shot: ${p.name} · ${m.name} (${S.describe(sc).toLowerCase()})`, hash: 'log/' + sc.id }; }
+  const m = ['log_med', 'receive'].includes(t.action) && getRow('medications', t.target_id), mp = m && getRow('patients', m.patient_id);
+  if (t.action === 'log_med') return mp && { pid: mp.id, label: `Log shot: ${mp.name} · ${m.name}`, hash: 'logmed/' + m.id };
+  if (t.action === 'receive') return mp && { pid: mp.id, label: `Receive shipment: ${mp.name} · ${m.name}`, hash: 'receive/' + m.id };
+  if (t.action === 'patient') { const p = getRow('patients', t.target_id); return p && { pid: p.id, label: `Open ${p.name}`, hash: 'patient/' + p.id }; }
+  return null;
+}
+const tagUrl = (req, code) => (appUrl() || `${isSecure(req) ? 'https' : 'http'}://${(trusted(req) && req.headers['x-forwarded-host']) || req.headers.host}`) + '/t/' + code;
+function tagOut(req, t) {
+  const tg = tagTarget(t), by = t.last_user ? q('SELECT name FROM users WHERE id=?').get(t.last_user) : null;
+  return { id: t.id, code: t.code, name: t.name, action: t.action, target_id: t.target_id, label: tg ? tg.label : 'Target was removed', broken: !tg, url: tagUrl(req, t.code), taps: t.taps, last_tap: t.last_tap, last_user: by ? by.name : null };
+}
+function tagChoices(u) {
+  const pids = patientIds(u).filter(pid => canManage(u, pid)), out = { patients: [], meds: [], schedules: [] };
+  for (const pid of pids) {
+    const p = getRow('patients', pid); out.patients.push({ id: p.id, label: p.name });
+    for (const m of q('SELECT * FROM medications WHERE patient_id=? AND deleted=0 AND active=1 ORDER BY name').all(pid)) {
+      out.meds.push({ id: m.id, label: `${p.name} · ${m.name}` });
+      for (const sc of schedulesFor(m.id)) out.schedules.push({ id: sc.id, label: `${p.name} · ${m.name} (${S.describe(sc).toLowerCase()})` });
+    }
+  }
+  return out;
+}
+const TAG_SPEC = { name: F.s(60), action: F.one(TAG_ACTIONS), target_id: F.int(1) };
+
 // ---------- API ----------
 const needUser = req => { if (!req.user) throw httpErr(401, 'Please sign in'); return req.user; };
 const needRole = (req, ...roles) => { const u = needUser(req); if (!roles.includes(u.role)) throw httpErr(403, 'Not allowed for your role'); return u; };
@@ -1016,6 +1050,40 @@ async function api(req, res, seg, url) {
     if (m === 'DELETE') { tx(() => { applyStock(before, +1); update('doses', id, { deleted: 1 }); }); audit(u.id, 'delete', 'doses', id, before, null); return send(res, 200, { ok: true }); }
   }
 
+  // ----- NFC tags -----
+  if (seg[0] === 'tags' && seg[1] === 'open' && seg[2] && m === 'GET') {
+    const u = needUser(req), t = q('SELECT * FROM nfc_tags WHERE code=? AND deleted=0').get(str(seg[2], 40));
+    const tg = t && tagTarget(t);
+    if (!tg || (tg.pid && !canSee(u, tg.pid))) throw httpErr(404, 'This tag isn\'t set up, or it opens something you don\'t have access to.');
+    q('UPDATE nfc_tags SET taps=taps+1, last_tap=?, last_user=? WHERE id=?').run(now(), u.id, t.id);
+    return send(res, 200, { name: t.name, hash: tg.hash });
+  }
+  if (seg[0] === 'tags') {
+    const u = needUser(req); if (!['admin', 'caregiver'].includes(u.role)) throw httpErr(403, 'Not allowed for your role');
+    const id = seg[1] ? idOf(seg[1]) : null;
+    const visible = t => { const tg = tagTarget(t); return !tg || !tg.pid || canManage(u, tg.pid) || u.role === 'admin'; };
+    const check = v => {
+      if (v.action === 'today') { v.target_id = null; return; }
+      if (!v.target_id) throw httpErr(400, 'Pick what the tag opens');
+      const tg = tagTarget(v); if (!tg) throw httpErr(400, 'That item was not found');
+      mustManage(u, tg.pid);
+    };
+    if (m === 'GET' && !id) return send(res, 200, { tags: q('SELECT * FROM nfc_tags WHERE deleted=0 ORDER BY name COLLATE NOCASE').all().filter(visible).map(t => tagOut(req, t)), choices: tagChoices(u) });
+    if (m === 'POST' && !id) {
+      const v = clean(TAG_SPEC, await readJson(req)); need(v, 'name', 'action'); check(v);
+      const tid = insert('nfc_tags', { code: crypto.randomBytes(9).toString('base64url').replace(/[-_]/g, 'x'), target_id: null, ...v });
+      audit(u.id, 'create', 'nfc_tags', tid, null, v);
+      return send(res, 200, tagOut(req, getRow('nfc_tags', tid)));
+    }
+    const before = getRow('nfc_tags', id); if (!before || !visible(before)) throw httpErr(404, 'Tag not found');
+    if (m === 'PUT') {
+      const v = { ...clean(TAG_SPEC, await readJson(req)) }; const merged = { ...before, ...v }; need(merged, 'name'); check(merged);
+      update('nfc_tags', id, { name: merged.name, action: merged.action, target_id: merged.target_id ?? null }); audit(u.id, 'update', 'nfc_tags', id, before, v);
+      return send(res, 200, tagOut(req, getRow('nfc_tags', id)));
+    }
+    if (m === 'DELETE') { update('nfc_tags', id, { deleted: 1 }); audit(u.id, 'delete', 'nfc_tags', id, before, null); return send(res, 200, { ok: true }); }
+  }
+
   // ----- supplies -----
   if (seg[0] === 'supplies') {
     const u = needUser(req), id = seg[1] ? idOf(seg[1]) : null;
@@ -1185,6 +1253,9 @@ async function listener(req, res) {
       res.writeHead(200, { 'Content-Type': 'text/calendar; charset=utf-8', 'Cache-Control': 'no-store' });
       return res.end(icsFor(u));
     }
+    // NFC tag link: hand off to the app, which signs in if needed and then opens the tag's screen
+    const tag = /^\/t\/([A-Za-z0-9]{6,40})\/?$/.exec(url.pathname);
+    if (tag && req.method === 'GET') { res.writeHead(302, { Location: '/#tag/' + tag[1], 'Cache-Control': 'no-store' }); return res.end(); }
     if (url.pathname.startsWith('/api/')) {
       if (req.method !== 'GET' && req.method !== 'HEAD' && !csrfOk(req)) throw httpErr(403, 'Blocked: request did not come from the ShotTracker page');
       return await api(req, res, url.pathname.slice(5).split('/').filter(Boolean), url);

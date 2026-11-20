@@ -18,6 +18,7 @@ Self-hosted tracker for injectable medications in a household: patients, invento
 | **Alerts** | Low stock (days of supply), out of stock, expiring and expired lots, opened vials past discard-by, no refills left, late shipment, supplies to reorder, sharps container 80% full |
 | **Reports** | Adherence (on time, late, skipped, missed), every shot with lot and site, print / save as PDF for doctor visits, CSV export |
 | **People** | Admin, caregiver (manages the patients you tick), patient (sees and logs their own), viewer (read-only) |
+| **NFC tags** | Tap a tag on the fridge to open straight to logging that shot; retarget tags any time without rewriting them |
 | **Safety** | HTTPS, required two-factor sign-in, activity log of every change, nightly encrypted backups with restore |
 
 ## Install on TrueNAS SCALE
@@ -71,6 +72,31 @@ The buttons work through Home Assistant's websocket, so no Home Assistant automa
 - The camera needs HTTPS, which you get through the proxy or the app's own port.
 - On iPhone, scanning uses a reader that's bundled into the Docker image when it's built.
 - If the camera can't read the code, type the lot and date, or paste the text from a scanner app.
+
+## NFC tags
+
+Stick an NFC tag on the fridge door, the medication box or the sharps container. Tap it with your phone and ShotTracker opens right where you need it.
+
+| When tapped | Opens |
+| --- | --- |
+| Log a shot (schedule) | The log screen for that shot, filled in: dose, lot and suggested site. Check it and press Save. |
+| Log a shot (medication) | The same, for a medication's current schedule |
+| Open Today | Everyone's next shots |
+| Open a patient | That patient's page |
+| Receive a shipment | Inventory with the "Receive shipment" form open for that medication |
+
+**Set one up:** Inventory → NFC tags → **Add tag**. Name it, choose what it opens, then **Next** to get the tag link (`https://<your address>/t/<code>`).
+- **Android (Chrome):** press **Write to tag** and hold the tag to the back of the phone.
+- **iPhone:** in the free *NFC Tools* app, choose Write → Add a record → URL, paste the link, then Write and hold the tag near the top of the phone.
+
+Any NTAG213/215/216 sticker works.
+
+**Good to know:**
+- **Changing a tag:** you can change what a tag opens at any time in ShotTracker without rewriting the tag. Each tag shows how often it was tapped and by whom.
+- **What's on the tag:** the tag holds only that link. Opening it still needs a signed-in ShotTracker account with access to that patient, and over VPN or home Wi-Fi only (behind the Nginx allow-list). A lost tag reveals nothing.
+- **Locking:** after writing, you can lock the tag in NFC Tools so no one can overwrite it. Locking is permanent, but you can still change what the link opens in ShotTracker.
+- **iPhone, opening:** tapping the tag shows a banner, and touching the banner opens Safari. Sign in once in Safari with "keep me signed in". Safari and a home-screen ShotTracker keep separate sign-ins.
+- **iPhone, no banner:** a Shortcuts automation (Automation → NFC → *Open URLs*) opens the tag's link without the banner.
 
 ## Behind Nginx (VPN only)
 
@@ -169,5 +195,6 @@ Every push to `main` runs the tests and publishes `ghcr.io/leonidis2013/shottrac
 
 | Version | Changes |
 | --- | --- |
+| 1.1.0 | NFC tags: tap a tag to open ShotTracker to a shot's log screen, Today, a patient, or receiving a shipment; write tags from Android Chrome; tap history |
 | 1.0.0 | Medications, lots and inventory, schedules with dose changes, shot log with dose math and site rotation, body map, barcode scanning, supplies and sharps, alerts, reminders (Home Assistant with action buttons, email, digest), calendar feed, HA sensors, reports with PDF/CSV, per-patient access and patient logins, encrypted backup and restore |
 | 0.1.0 | HTTPS, admin setup, TOTP sign-in, users and roles, patients, encrypted settings, activity log |

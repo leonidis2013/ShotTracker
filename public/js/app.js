@@ -411,7 +411,7 @@ function weightCard(p, weights, canLog, man) {
 }
 
 // ---------- Inventory ----------
-async function inventoryPage() {
+async function inventoryPage(openMid) {
   const pats = await api('GET', '/patients');
   const details = await Promise.all(pats.map(p => api('GET', '/patients/' + p.id)));
   const supplies = await api('GET', '/supplies');
@@ -436,7 +436,9 @@ async function inventoryPage() {
   fill(main, h('div', { class: 'page' },
     ...medsBlock, !medsBlock.length && card('Medications', h('div', { class: 'empty' }, 'Add medications on a patient\'s page first.')),
     suppliesCard(supplies),
+    isManager() && await tagsCard(),
     card('Lot lookup', h('p', { class: 'note' }, 'Find every shot given from a lot, for example after a recall notice.'), h('div', { class: 'row' }, search, h('button', { onclick: lookup }, 'Search')), found)));
+  if (openMid) { const m = details.flatMap(d => d.medications).find(x => x.id === openMid); if (m) lotDialog(m); }
 }
 function lotDialog(m, l) {
   const isNew = !l, err = errBox(), e = l || {};
@@ -454,8 +456,9 @@ function lotDialog(m, l) {
     const body = { lot_number: lot.value, expires: exp.value, ndc: ndc.value, qty_received: qty.value, received: rec.value, location: loc.value, notes: notes.value };
     if (isNew) { body.medication_id = m.id; body.used_refill = refill.checked; if (ship.value) body.next_shipment = ship.value; }
     else Object.assign(body, { qty_left: left.value, opened: opened.value, discard_by: discard.value });
-    try { await api(isNew ? 'POST' : 'PUT', '/lots' + (isNew ? '' : '/' + l.id), body); dlg.close(); render(); } catch (x) { showErr(err, x); }
+    try { await api(isNew ? 'POST' : 'PUT', '/lots' + (isNew ? '' : '/' + l.id), body); dlg.close(); leave(); } catch (x) { showErr(err, x); }
   };
+  const leave = () => location.hash.startsWith('#receive') ? go('inventory') : render();
   const del = !isNew && (async () => { if (!confirm('Delete this lot?')) return; try { await api('DELETE', '/lots/' + l.id); dlg.close(); render(); } catch (x) { showErr(err, x); } });
   fill(dlg, h('form', { onsubmit: save }, h('h2', {}, (isNew ? 'Receive shipment: ' : 'Edit lot: ') + m.name), err,
     h('button', { type: 'button', class: 'scanbtn', onclick: scan }, 'Scan carton barcode'), scanMsg,
@@ -465,7 +468,7 @@ function lotDialog(m, l) {
     h('div', { class: 'two' }, field('Where it\'s kept', loc), field('NDC', ndc)), field('Notes', notes),
     isNew && h('label', { class: 'row note' }, refill, `This used a refill (${m.refills_left ?? 0} left)`),
     isNew && field('Next shipment expected (optional)', ship),
-    btns(del && h('button', { type: 'button', class: 'danger', onclick: del }, 'Delete'), h('button', { type: 'button', onclick: () => dlg.close() }, 'Cancel'), h('button', { class: 'primary', type: 'submit' }, 'Save'))));
+    btns(del && h('button', { type: 'button', class: 'danger', onclick: del }, 'Delete'), h('button', { type: 'button', onclick: () => { dlg.close(); if (location.hash.startsWith('#receive')) go('inventory'); } }, 'Cancel'), h('button', { class: 'primary', type: 'submit' }, 'Save'))));
   dlg.showModal();
 }
 function suppliesCard(list) {
@@ -491,6 +494,65 @@ function supplyDialog(s = {}) {
   fill(dlg, h('form', { onsubmit: save }, h('h2', {}, isNew ? 'Add supply' : 'Edit supply'), err, h('div', { class: 'two' }, field('Name', name), field('Kind', kind)), box,
     btns(del && h('button', { type: 'button', class: 'danger', onclick: del }, 'Delete'), h('button', { type: 'button', onclick: () => dlg.close() }, 'Cancel'), h('button', { class: 'primary', type: 'submit' }, 'Save'))));
   draw(); dlg.showModal();
+}
+
+// ---------- NFC tags ----------
+const TAG_ACTIONS = [['log_schedule', 'Log a shot (pick the schedule)'], ['log_med', 'Log a shot (pick the medication)'], ['today', 'Open Today'], ['patient', 'Open a patient'], ['receive', 'Receive a shipment']];
+const canWriteNfc = () => 'NDEFReader' in window;
+async function writeNfc(url, msg) {
+  if (!canWriteNfc()) { msg.textContent = 'This browser can\'t write tags. Use an app like NFC Tools: write a URL record with the link above.'; return; }
+  try {
+    const ndef = new NDEFReader(), ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 30000);
+    msg.textContent = 'Hold the tag to the back of your phone…';
+    await ndef.write({ records: [{ recordType: 'url', data: url }] }, { signal: ctl.signal, overwrite: true }); clearTimeout(t);
+    msg.textContent = 'Tag written. Tap it to try it.';
+  } catch (e) { msg.textContent = e.name === 'AbortError' ? 'No tag found. Try again.' : e.name === 'NotAllowedError' ? 'NFC permission was refused.' : 'Couldn\'t write the tag: ' + e.message; }
+}
+async function tagsCard() {
+  const r = await api('GET', '/tags');
+  return card('NFC tags',
+    h('p', { class: 'note' }, 'Stick a tag on the fridge door or the sharps box. Tapping it with your phone opens ShotTracker right where you need it. You can change what a tag opens here at any time without rewriting it.'),
+    r.tags.length ? r.tags.map(t => h('div', { class: 'li' },
+      h('div', { class: 'grow' }, h('b', {}, t.name), ' ', t.broken && pill('bad', 'Target removed'),
+        h('div', { class: 'note' }, t.label), h('div', { class: 'note faint' }, t.taps ? `Tapped ${t.taps}× · last ${fmtWhen(t.last_tap)}${t.last_user ? ' by ' + t.last_user : ''}` : 'Not tapped yet')),
+      h('button', { class: 'sm', onclick: () => tagDialog(r.choices, t) }, 'Edit')))
+      : h('div', { class: 'empty' }, 'No tags yet.'),
+    h('button', { class: 'sm', style: 'margin-top:6px', onclick: () => tagDialog(r.choices) }, '+ Add tag'));
+}
+function tagDialog(choices, t) {
+  const isNew = !t, err = errBox(), msg = h('div', { class: 'note' });
+  const name = txt(t?.name, { placeholder: 'Fridge door, Son\'s shot, Sharps box…' }), action = sel(TAG_ACTIONS, t?.action || 'log_schedule');
+  let target = null; const targetBox = h('div');
+  const opts = { log_schedule: choices.schedules, log_med: choices.meds, patient: choices.patients, receive: choices.meds };
+  const drawTarget = () => {
+    const list = opts[action.value];
+    if (!list) { target = null; return fill(targetBox); }
+    target = sel(list.length ? list.map(x => [x.id, x.label]) : [['', 'Nothing to pick yet']], t && t.action === action.value ? t.target_id : list[0]?.id);
+    fill(targetBox, field({ log_schedule: 'Schedule', log_med: 'Medication', patient: 'Patient', receive: 'Medication' }[action.value], target));
+  };
+  action.onchange = drawTarget;
+  const linkBox = t && h('div', { class: 'field' }, h('span', {}, 'Tag link'), h('div', { class: 'secret small' }, t.url),
+    h('div', { class: 'row', style: 'margin-top:6px' },
+      h('button', { type: 'button', class: canWriteNfc() ? 'primary' : '', onclick: () => writeNfc(t.url, msg) }, 'Write to tag'),
+      h('button', { type: 'button', onclick: () => navigator.clipboard?.writeText(t.url).then(() => { msg.textContent = 'Link copied'; }) }, 'Copy link')), msg,
+    !canWriteNfc() && h('p', { class: 'note' }, 'iPhone: install NFC Tools, choose Write → Add a record → URL, paste the link, then Write and hold the tag to the top of the phone. Android Chrome can write it straight from here.'));
+  const save = async ev => {
+    ev.preventDefault();
+    try {
+      const out = await api(isNew ? 'POST' : 'PUT', '/tags' + (isNew ? '' : '/' + t.id), { name: name.value, action: action.value, target_id: target && target.value ? +target.value : null });
+      if (isNew) { const fresh = await api('GET', '/tags'); return tagDialog(fresh.choices, out); }
+      dlg.close(); render();
+    } catch (x) { showErr(err, x); }
+  };
+  const del = t && (async () => { if (!confirm(`Delete the "${t.name}" tag? Tapping it will do nothing until you set up a new one.`)) return; try { await api('DELETE', '/tags/' + t.id); dlg.close(); render(); } catch (x) { showErr(err, x); } });
+  fill(dlg, h('form', { onsubmit: save }, h('h2', {}, isNew ? 'Add NFC tag' : 'NFC tag'), err,
+    field('Name', name), field('When tapped', action), targetBox, linkBox,
+    btns(del && h('button', { type: 'button', class: 'danger', onclick: del }, 'Delete'), h('button', { type: 'button', onclick: () => { dlg.close(); render(); } }, 'Close'), h('button', { class: 'primary', type: 'submit' }, isNew ? 'Next' : 'Save'))));
+  drawTarget(); if (!dlg.open) dlg.showModal();
+}
+async function openTag(code) {
+  try { const r = await api('GET', '/tags/open/' + encodeURIComponent(code)); location.replace('#' + r.hash); }
+  catch (e) { location.replace('#today'); setTimeout(() => alert(e.message), 300); }
 }
 
 // ---------- Reports ----------
@@ -668,7 +730,10 @@ async function render() {
     state.version = s.version; state.user = s.user; $('#hVer').textContent = 'v' + s.version;
     if (!s.user) { $('#nav').classList.add('hide'); $('#meBtn').classList.add('hide'); if (dlg.open) dlg.close(); return s.setup ? setupPage() : loginPage(); }
     let { page, args } = route();
+    if (page === 'tag') return openTag(args[0] || '');
     if (page === 'log') { shell('today'); await todayPage(); return logDialog({ schedule_id: +args[0] }); }
+    if (page === 'logmed') { shell('today'); await todayPage(); return logDialog({ medication_id: +args[0] }); }
+    if (page === 'receive' && isManager()) { shell('inventory'); return inventoryPage(+args[0]); }
     const def = PAGES.find(p => p.id === page);
     if (page !== 'patient' && page !== 'account' && (!def || !def.show(s.user))) page = 'today';
     shell(page);
