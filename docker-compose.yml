@@ -1,0 +1,26 @@
+# docker compose up -d
+# Then open https://<this machine's IP>:9743 and accept the certificate warning once.
+# The first visit asks you to create the admin account and set up two-factor sign-in.
+# Everything ShotTracker keeps is in the shottracker-data volume.
+services:
+  shottracker:
+    image: ghcr.io/leonidis2013/shottracker:latest
+    # check for a newer image every time the app starts or restarts
+    pull_policy: always
+    build: .
+    container_name: shottracker
+    restart: unless-stopped
+    ports:
+      - "9743:8443"
+    volumes:
+      - shottracker-data:/data
+    environment:
+      TZ: America/Chicago
+      # Behind a reverse proxy: the proxy's IP (or a range like 172.16.0.0/12), so the app sees real client
+      # addresses and knows the browser is on https. Leave unset when nothing sits in front of it.
+      # TRUST_PROXY: "192.168.1.10"
+      # Optional plain-http port for a proxy that can't talk https to the app. Keep it off the LAN if you use it.
+      # HTTP_PORT: "8080"
+
+volumes:
+  shottracker-data:

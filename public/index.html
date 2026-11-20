@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#151a21">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="robots" content="noindex, nofollow">
+<title>ShotTracker</title>
+<script src="js/theme.js"></script>
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header>
+  <h1>ShotTracker <span class="ver" id="hVer"></span><small>Injection tracker</small></h1>
+  <nav id="nav" class="hide"></nav>
+  <div class="spacer"></div>
+  <button id="meBtn" class="hide"></button>
+  <button id="themeBtn" class="gear" title="Light / dark" aria-label="Light or dark"><svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg></button>
+</header>
+<main id="main"></main>
+<dialog id="dlg"></dialog>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "shottracker",
+  "version": "0.1.0",
+  "description": "Self-hosted injectable medication tracker: patients, inventory and lots, schedules, injection log, reminders",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning test/run.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

@@ -1,0 +1,22 @@
+# TrueNAS SCALE: Apps > Discover Apps > Custom App > "Install via YAML", paste this.
+# Then open https://<TrueNAS IP>:9743, accept the certificate warning once, create the admin account
+# and set up two-factor sign-in. Change the host port if 9743 is taken.
+# Everything ShotTracker keeps (database, certificate, encryption key) is in a Docker named volume.
+services:
+  shottracker:
+    image: ghcr.io/leonidis2013/shottracker:latest
+    # check for a newer image every time the app starts or restarts
+    pull_policy: always
+    container_name: shottracker
+    restart: unless-stopped
+    ports:
+      - "9743:8443"
+    volumes:
+      - shottracker-data:/data
+    environment:
+      TZ: America/Chicago
+      # your reverse proxy's IP (or range); see the README
+      # TRUST_PROXY: "192.168.1.10"
+
+volumes:
+  shottracker-data:
