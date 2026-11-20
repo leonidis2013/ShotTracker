@@ -1,4 +1,16 @@
 # ShotTracker: injectable medication tracker
+
+# The camera barcode reader for browsers without a built-in one (iPhone Safari). It is only a browser
+# file served to the page; the server itself has no npm dependencies. If the download fails, the
+# build still succeeds and the scan screen falls back to typing or pasting the code.
+FROM node:22-alpine AS vendor
+WORKDIR /v
+RUN mkdir -p out && \
+    (npm install --no-save --no-audit --no-fund --ignore-scripts @zxing/library@0.21.3 && \
+     (cp node_modules/@zxing/library/umd/index.min.js out/zxing.min.js 2>/dev/null || \
+      cp "$(find node_modules/@zxing/library/umd -name '*.min.js' | head -n 1)" out/zxing.min.js) && \
+     echo "ZXing barcode reader bundled") || echo "WARNING: ZXing not bundled; scanning falls back to typed entry"
+
 FROM node:22-alpine
 
 ENV NODE_ENV=production \
@@ -10,9 +22,11 @@ RUN apk add --no-cache openssl tzdata
 
 WORKDIR /app
 COPY package.json server.js ./
+COPY lib ./lib
 COPY public ./public
+COPY --from=vendor /v/out/ ./public/vendor/
 
-# the database, certificate and encryption key are kept in /data (a named volume, so they survive updates)
+# the database, certificate, encryption key and backups are kept in /data (a named volume, so they survive updates)
 RUN mkdir -p /data && chown node:node /data
 USER node
 VOLUME /data

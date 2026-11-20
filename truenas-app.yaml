@@ -17,6 +17,8 @@ services:
       TZ: America/Chicago
       # your reverse proxy's IP (or range); see the README
       # TRUST_PROXY: "192.168.1.10"
+      # optional: also copy each nightly backup to a mounted folder
+      # BACKUP_DIR: /backups
 
 volumes:
   shottracker-data:

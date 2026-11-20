@@ -19,6 +19,8 @@ services:
       # Behind a reverse proxy: the proxy's IP (or a range like 172.16.0.0/12), so the app sees real client
       # addresses and knows the browser is on https. Leave unset when nothing sits in front of it.
       # TRUST_PROXY: "192.168.1.10"
+      # optional: also copy each nightly backup to a mounted folder
+      # BACKUP_DIR: /backups
       # Optional plain-http port for a proxy that can't talk https to the app. Keep it off the LAN if you use it.
       # HTTP_PORT: "8080"
 
