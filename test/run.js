@@ -2,6 +2,7 @@
 // exercises sign-in, roles, medications, inventory, schedules, logging, sites, reminders, alerts, sensors,
 // email, the calendar feed, reports, CSV, backups and restore.
 'use strict';
+process.env.TZ = 'America/Chicago'; // same zone as the server under test (CI runners are UTC)
 const { spawn, spawnSync, execFileSync } = require('child_process');
 const fs = require('fs'), os = require('os'), path = require('path'), assert = require('assert'), crypto = require('crypto'), http = require('http'), net = require('net'), tls = require('tls');
 const root = path.join(__dirname, '..'), data = fs.mkdtempSync(path.join(os.tmpdir(), 'st-')), port = 19000 + Math.floor(Math.random() * 900);
