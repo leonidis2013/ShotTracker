@@ -7,6 +7,7 @@ const { execFileSync } = require('child_process');
 const { DatabaseSync } = require('node:sqlite');
 const S = require('./lib/sched');
 const N = require('./lib/notify');
+const NDC = require('./lib/ndc');
 
 const VERSION = require('./package.json').version;
 const DATA = process.env.DATA_DIR || '/data';
@@ -14,7 +15,8 @@ const HTTPS_PORT = +(process.env.HTTPS_PORT ?? 8443);  // 0 turns https off (tes
 const HTTP_PORT = +(process.env.HTTP_PORT || 0);        // plain http is off unless you set it
 const TRUST = (process.env.TRUST_PROXY || '').split(',').map(s => s.trim()).filter(Boolean);
 const BACKUP_COPY_DIR = process.env.BACKUP_DIR || '';   // optional extra copy of each backup (a mounted folder)
-const TICK_MS = +(process.env.TICK_MS || 60e3);          // reminder engine interval (tests use a short one)
+const TICK_MS = +(process.env.TICK_MS || 60e3);
+const OPENFDA_URL = process.env.OPENFDA_URL || 'https://api.fda.gov';   // FDA NDC Directory (tests point this at a fake)          // reminder engine interval (tests use a short one)
 const PUB = path.join(__dirname, 'public');
 const COOKIE = 'st_session';
 const IDLE_SHORT = 12 * 3600e3, IDLE_LONG = 30 * 86400e3;
@@ -100,6 +102,8 @@ const MIGRATIONS = [
   // 1.1: NFC tags that open the app to a chosen screen
   `CREATE TABLE nfc_tags(id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE, name TEXT NOT NULL, action TEXT NOT NULL, target_id INTEGER,
      taps INTEGER NOT NULL DEFAULT 0, last_tap TEXT, last_user INTEGER, ${STAMPS});`,
+  // 1.2: cached FDA NDC lookups
+  `CREATE TABLE ndc_cache(ndc TEXT PRIMARY KEY, data TEXT NOT NULL, fetched_at INTEGER NOT NULL);`,
 ];
 {
   const have = +(db.prepare(`SELECT value FROM meta WHERE key='schema'`).get()?.value || 0);
@@ -223,6 +227,7 @@ const SETTINGS = {
   smtp_host: {}, smtp_port: { def: '587' }, smtp_user: {}, smtp_pass: { secret: true }, smtp_from: {},
   remind_day_before: { def: '19:00' }, remind_morning: { def: '08:00' }, repeat_min: { def: '60' }, digest_time: { def: '07:00' },
   backup_pass: { secret: true }, backup_time: { def: '02:30' }, backup_keep: { def: '30' },
+  ndc_lookup: { def: '1' }, openfda_key: { secret: true },
 };
 function setting(k) { const r = q('SELECT value FROM settings WHERE key=?').get(k); const v = r ? r.value : ''; if (!v) return SETTINGS[k]?.def ?? ''; return SETTINGS[k]?.secret ? unseal(v) : v; }
 const cfg = () => Object.fromEntries(Object.keys(SETTINGS).map(k => [k, setting(k)]));
@@ -893,6 +898,19 @@ async function api(req, res, seg, url) {
     audit(u.id, 'recovery-codes-renewed', 'users', u.id);
     return send(res, 200, { recovery: rc.codes });
   }
+  // ----- drug lookup by NDC (FDA NDC Directory); only the number leaves the server -----
+  if (seg[0] === 'ndc' && seg[1] && m === 'GET') {
+    needRole(req, 'admin', 'caregiver');
+    if (setting('ndc_lookup') !== '1') return send(res, 200, { found: false, disabled: true });
+    const key = NDC.digits(seg[1]).slice(0, 11) + (seg[1].includes('-') ? ':' + str(seg[1], 14) : '');
+    const hit = q('SELECT * FROM ndc_cache WHERE ndc=?').get(key);
+    if (hit) { const d = JSON.parse(hit.data); if (Date.now() - hit.fetched_at < (d.found ? 30 : 1) * 86400e3) return send(res, 200, { ...d, cached: true }); }
+    let d;
+    try { d = await NDC.lookup(decodeURIComponent(seg[1]), { base: OPENFDA_URL, apiKey: setting('openfda_key') }); }
+    catch (e) { if (e.code === 400) throw httpErr(400, e.message); throw httpErr(502, e.name === 'TimeoutError' || /fetch failed/.test(e.message) ? 'Couldn\'t reach the FDA lookup (api.fda.gov). Check the app\'s internet access.' : e.message); }
+    q('INSERT OR REPLACE INTO ndc_cache VALUES(?,?,?)').run(key, JSON.stringify(d), Date.now());
+    return send(res, 200, d);
+  }
   if (route === 'GET /ha/services') { needUser(req); const c = cfg(); if (!c.ha_url || !c.ha_token) return send(res, 200, []); try { return send(res, 200, await N.haNotifyServices(cfg())); } catch (e) { throw httpErr(502, e.message); } }
 
   // ----- today, alerts -----
@@ -1059,7 +1077,7 @@ async function api(req, res, seg, url) {
     return send(res, 200, { name: t.name, hash: tg.hash });
   }
   if (seg[0] === 'tags') {
-    const u = needUser(req); if (!['admin', 'caregiver'].includes(u.role)) throw httpErr(403, 'Not allowed for your role');
+    const u = needRole(req, 'admin'); // only the admin sets up tags; anyone signed in can tap one
     const id = seg[1] ? idOf(seg[1]) : null;
     const visible = t => { const tg = tagTarget(t); return !tg || !tg.pid || canManage(u, tg.pid) || u.role === 'admin'; };
     const check = v => {

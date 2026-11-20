@@ -149,3 +149,6 @@ header nav button { flex:none; }
 .settings-tabs { align-self:flex-start; }
 .page .page { padding:0; }
 @media (max-width:600px) { header nav { justify-content:space-between; gap:0; } header nav button { padding:6px 7px; } }
+.ndcbox { background:var(--card2); border-radius:8px; padding:8px 10px; margin:4px 0 10px; font-size:13px; border-left:3px solid var(--teal); }
+.ndcbox.warn { border-left-color:var(--warn); color:var(--warn); }
+.ndcrow input { flex:1; min-width:0; }

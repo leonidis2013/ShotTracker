@@ -85,7 +85,7 @@ Stick an NFC tag on the fridge door, the medication box or the sharps container.
 | Open a patient | That patient's page |
 | Receive a shipment | Inventory with the "Receive shipment" form open for that medication |
 
-**Set one up:** Settings → NFC tags → **Add tag**. Name it, choose what it opens, then **Next** to get the tag link (`https://<your address>/t/<code>`).
+**Set one up (admin only):** Settings → NFC tags → **Add tag**. Name it, choose what it opens, then **Next** to get the tag link (`https://<your address>/t/<code>`).
 - **Android (Chrome):** press **Write to tag** and hold the tag to the back of the phone.
 - **iPhone:** in the free *NFC Tools* app, choose Write → Add a record → URL, paste the link, then Write and hold the tag near the top of the phone.
 
@@ -97,6 +97,19 @@ Any NTAG213/215/216 sticker works.
 - **Locking:** after writing, you can lock the tag in NFC Tools so no one can overwrite it. Locking is permanent, but you can still change what the link opens in ShotTracker.
 - **iPhone, opening:** tapping the tag shows a banner, and touching the banner opens Safari. Sign in once in Safari with "keep me signed in". Safari and a home-screen ShotTracker keep separate sign-ins.
 - **iPhone, no banner:** a Shortcuts automation (Automation → NFC → *Open URLs*) opens the tag's link without the banner.
+
+## Drug lookup (FDA NDC Directory)
+
+When you scan a carton or type an NDC and press **Look up**, ShotTracker looks it up in the FDA's NDC Directory (openFDA, updated daily). It shows the drug name, generic name, strength, form, route, manufacturer and package.
+- **Add medication → Scan carton:** fills in the name, generic name, form, strength, syringe size, route and NDC.
+- **Receive shipment → Scan carton barcode:** shows a red warning if the carton is a different drug than the one you're receiving. Otherwise it confirms the match and sets the quantity to what the carton holds.
+
+**Good to know:**
+- **What's sent:** only the NDC number goes to `api.fda.gov`. No names or patient information are ever sent. Results are saved for 30 days, so repeat scans don't go out again.
+- **Internet access:** the container needs outbound internet. If the FDA can't be reached, scanning still fills in the lot and expiration.
+- **Missing drugs:** the FDA notes its directory doesn't contain every drug, so occasionally nothing is found.
+- **Reference only:** it isn't a substitute for the prescription or the label.
+- **Turning it off:** Settings → General → Drug lookup. An openFDA API key there is optional.
 
 ## Behind Nginx (VPN only)
 
@@ -195,6 +208,7 @@ Every push to `main` runs the tests and publishes `ghcr.io/leonidis2013/shottrac
 
 | Version | Changes |
 | --- | --- |
+| 1.2.0 | Drug lookup by NDC in the FDA NDC Directory: scan a carton to fill in a new medication, and get a warning when a received carton is a different drug; NFC tag setup is admin-only |
 | 1.1.2 | Lot lookup moved to Reports |
 | 1.1.1 | Settings is one screen with tabs: General, Users, NFC tags and Activity (top bar is now Today, Patients, Inventory, Reports, Settings) |
 | 1.1.0 | NFC tags: tap a tag to open ShotTracker to a shot's log screen, Today, a patient, or receiving a shipment; write tags from Android Chrome; tap history |

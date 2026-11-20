@@ -51,6 +51,19 @@ const haSrv = http.createServer((req, res) => {
   });
 });
 
+// ---------- fake FDA NDC Directory ----------
+const fdaHits = [];
+const fdaSrv = http.createServer((req, res) => {
+  const u = new URL(req.url, 'http://x'), search = u.searchParams.get('search') || '';
+  fdaHits.push(search);
+  if (u.pathname === '/drug/ndc.json' && search.includes('"0024-5918-01"')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ results: [{ product_ndc: '0024-5918', brand_name: 'DUPIXENT', generic_name: 'DUPILUMAB', labeler_name: 'sanofi-aventis U.S. LLC', dosage_form: 'INJECTION, SOLUTION', route: ['SUBCUTANEOUS'],
+      active_ingredients: [{ name: 'DUPILUMAB', strength: '300 mg/2mL' }], packaging: [{ package_ndc: '0024-5918-01', description: '2 SYRINGE in 1 CARTON (0024-5918-01) > 2 mL in 1 SYRINGE' }] }] }));
+  }
+  res.writeHead(404, { 'Content-Type': 'application/json' }); res.end('{"error":{"code":"NOT_FOUND"}}');
+});
+
 // ---------- fake email server (STARTTLS) ----------
 const mails = [];
 const tlsDir = path.join(data, 'smtp'); fs.mkdirSync(tlsDir);
@@ -77,7 +90,7 @@ const smtpSrv = net.createServer(sock => {
 
 function start() {
   return spawn(process.execPath, ['--disable-warning=ExperimentalWarning', path.join(root, 'server.js')], {
-    env: { ...process.env, DATA_DIR: path.join(data, 'd'), HTTP_PORT: port, HTTPS_PORT: '0', TICK_MS: '400', TZ: 'America/Chicago', NODE_EXTRA_CA_CERTS: path.join(tlsDir, 'c.pem') }, stdio: ['ignore', 'inherit', 'inherit'] });
+    env: { ...process.env, DATA_DIR: path.join(data, 'd'), HTTP_PORT: port, HTTPS_PORT: '0', TICK_MS: '400', TZ: 'America/Chicago', OPENFDA_URL: `http://127.0.0.1:${fdaSrv.address().port}`, NODE_EXTRA_CA_CERTS: path.join(tlsDir, 'c.pem') }, stdio: ['ignore', 'inherit', 'inherit'] });
 }
 async function ready() { for (let i = 0; i < 100; i++) { try { if ((await fetch(base + '/api/health')).ok) return; } catch {} await sleep(100); } throw new Error('server did not start'); }
 const until = async (fn, ms = 8000) => { const t = Date.now(); while (Date.now() - t < ms) { const v = await fn(); if (v) return v; await sleep(150); } throw new Error('timed out waiting'); };
@@ -102,7 +115,17 @@ const until = async (fn, ms = 8000) => { const t = Date.now(); while (Date.now()
   assert.deepStrictEqual([g.ndc, g.expires, g.lot, g.serial], ['1234567890', '2027-05-31', 'AB12C', 'SER999']);
   assert.strictEqual(parseGS1('(01)00312345678906(17)271200(10)LOT9').expires, '2027-12-31', 'day 00 = end of month');
 
-  await new Promise(r => haSrv.listen(0, '127.0.0.1', r)); await new Promise(r => smtpSrv.listen(0, '127.0.0.1', r));
+  // NDC parsing
+  const NDC = require('../lib/ndc');
+  assert.deepStrictEqual(NDC.candidates('0024591801'), ['0024-5918-01', '00245-918-01', '00245-9180-1']);
+  assert.deepStrictEqual(NDC.candidates('00024591801'), ['0024-5918-01', '00024-5918-1']);
+  assert.deepStrictEqual(NDC.parseStrength('300 mg/2mL'), { conc: 150, conc_unit: 'mg' });
+  assert.deepStrictEqual(NDC.parseStrength('100 [iU]/mL'), { conc: 100, conc_unit: 'units' });
+  assert.deepStrictEqual(NDC.parsePackage('2 SYRINGE in 1 CARTON (0024-5918-01) > 2 mL in 1 SYRINGE'), { form: 'syringe', unit_ml: 2, per_carton: 2 });
+  assert.strictEqual(NDC.parsePackage('1 VIAL, MULTI-DOSE in 1 CARTON > 10 mL in 1 VIAL, MULTI-DOSE').form, 'multi_vial');
+  assert.strictEqual(NDC.parsePackage('1 PEN in 1 CARTON > 1 mL in 1 PEN').form, 'pen');
+
+  await new Promise(r => haSrv.listen(0, '127.0.0.1', r)); await new Promise(r => fdaSrv.listen(0, '127.0.0.1', r)); await new Promise(r => smtpSrv.listen(0, '127.0.0.1', r));
   let srv = start();
   try {
     await ready();
@@ -302,6 +325,6 @@ const until = async (fn, ms = 8000) => { const t = Date.now(); while (Date.now()
     assert.strictEqual((await fetch(base + '/%2e%2e/server.js')).status, 404);
 
     console.log('All tests passed');
-  } finally { srv.kill(); haSrv.close(); smtpSrv.close(); await sleep(200); fs.rmSync(data, { recursive: true, force: true }); }
+  } finally { srv.kill(); haSrv.close(); fdaSrv.close(); smtpSrv.close(); await sleep(200); fs.rmSync(data, { recursive: true, force: true }); }
   process.exit(0);
 })().catch(e => { console.error(e); process.exit(1); });

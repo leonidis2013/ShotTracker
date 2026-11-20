@@ -136,7 +136,7 @@ const PAGES = [
   { id: 'patients', label: 'Patients', show: () => true },
   { id: 'inventory', label: 'Inventory', show: u => u.role !== 'patient' },
   { id: 'reports', label: 'Reports', show: () => true },
-  { id: 'settings', label: 'Settings', show: u => ['admin', 'caregiver'].includes(u.role) },
+  { id: 'settings', label: 'Settings', show: u => u.role === 'admin' },
 ];
 const route = () => { const [p, ...rest] = (location.hash.slice(1) || 'today').split('/'); return { page: p, args: rest }; };
 const go = hash => { if (location.hash === '#' + hash) render(); else location.hash = hash; };
@@ -308,7 +308,24 @@ function medDialog(m) {
   const route = sel(['SubQ', 'IM', 'IV', 'ID', 'other'], m.route || 'SubQ'), storage = sel([['fridge', 'Refrigerated'], ['room', 'Room temperature'], ['freezer', 'Frozen']], m.storage || 'fridge');
   const opened = num(m.opened_days, { step: 1 }), prescriber = txt(m.prescriber), pharmacy = txt(m.pharmacy), phone = txt(m.pharmacy_phone, { type: 'tel' }), rx = txt(m.rx_number);
   const refills = num(m.refills_left, { step: 1 }), ship = h('input', { type: 'date', value: m.next_shipment || '' }), reorder = num(m.reorder_days ?? 21, { step: 1 }), ndc = txt(m.ndc), notes = h('textarea', { value: m.notes || '', rows: 2 }), active = chk(m.active ?? true);
-  const strengthBox = h('div');
+  const strengthBox = h('div'), ndcBox = h('div');
+  const applyNdc = d => {
+    fill(ndcBox, ndcInfo(d));
+    if (!d.found) return;
+    const sg = d.suggest, empty = el => isNew || !el.value;
+    if (sg.name && empty(name)) name.value = sg.name;
+    if (sg.generic && empty(generic)) generic.value = sg.generic;
+    if (sg.form && isNew) { form.value = sg.form; drawStrength(); }
+    if (sg.conc && (isNew || !amt.value)) {
+      cunit.value = sg.conc_unit;
+      if (form.value === 'multi_vial') { amt.value = sg.conc; if (sg.unit_ml) ml.value = sg.unit_ml; }
+      else if (sg.unit_ml) { amt.value = Math.round(sg.conc * sg.unit_ml * 1000) / 1000; ml.value = sg.unit_ml; }
+    }
+    if (sg.route && isNew) route.value = sg.route;
+    if (sg.ndc) ndc.value = sg.ndc;
+  };
+  const findNdc = async v => { if (!v) return; fill(ndcBox, h('div', { class: 'ndcbox note' }, 'Looking it up…')); applyNdc(await lookupNdc(v)); };
+  const ndcRow = h('div', { class: 'row ndcrow' }, ndc, h('button', { type: 'button', onclick: () => findNdc(ndc.value) }, 'Look up'));
   const drawStrength = () => {
     const vial = form.value === 'multi_vial';
     fill(strengthBox, vial
@@ -328,13 +345,14 @@ function medDialog(m) {
   };
   const del = !isNew && (async () => { if (!confirm(`Remove ${m.name}? Its history stays.`)) return; try { await api('DELETE', '/meds/' + m.id); dlg.close(); render(); } catch (x) { showErr(err, x); } });
   fill(dlg, h('form', { onsubmit: save }, h('h2', {}, isNew ? 'Add medication' : 'Edit medication'), err,
+    h('button', { type: 'button', class: 'scanbtn', onclick: () => scanDialog(r => { if (r.ndc) { ndc.value = r.ndc; findNdc(r.ndc); } else fill(ndcBox, h('div', { class: 'ndcbox warn' }, 'No NDC in that barcode.')); }) }, isNew ? 'Scan carton to fill this in' : 'Scan carton'), ndcBox,
     h('div', { class: 'two' }, field('Name', name), field('Generic name (optional)', generic)),
     h('div', { class: 'three' }, field('Form', form), field('Route', route), field('Storage', storage)), strengthBox,
     h('div', { class: 'sub-h' }, 'Prescription and refills'),
     h('div', { class: 'two' }, field('Prescriber', prescriber), field('Rx number', rx)),
     h('div', { class: 'two' }, field('Pharmacy', pharmacy), field('Pharmacy phone', phone)),
     h('div', { class: 'three' }, field('Refills left', refills), field('Next shipment', ship), field('Warn at days of supply', reorder)),
-    field('NDC (optional, matches scanned cartons)', ndc), field('Notes', notes),
+    h('div', { class: 'field' }, h('span', {}, 'NDC (optional, used to check scanned cartons)'), ndcRow), field('Notes', notes),
     !isNew && h('label', { class: 'row note' }, active, 'Active (uncheck to stop tracking without deleting)'),
     btns(del && h('button', { type: 'button', class: 'danger', onclick: del }, 'Remove'), h('button', { type: 'button', onclick: () => dlg.close() }, 'Cancel'), h('button', { class: 'primary', type: 'submit' }, 'Save'))));
   drawStrength(); dlg.showModal(); if (isNew) name.focus();
@@ -408,6 +426,29 @@ function weightCard(p, weights, canLog, man) {
       man && h('button', { class: 'sm danger', onclick: async () => { await api('DELETE', `/patients/${p.id}/weights/${w.id}`); render(); } }, '×'))) : h('div', { class: 'empty' }, 'No weights recorded.'));
 }
 
+// ---------- drug lookup by NDC (FDA NDC Directory) ----------
+const ndcDigits = x => String(x || '').replace(/\D/g, '');
+async function lookupNdc(ndc) { try { return await api('GET', '/ndc/' + encodeURIComponent(ndc)); } catch (e) { return { found: false, error: e.message }; } }
+function ndcInfo(d) {
+  if (d.disabled) return null;
+  if (d.error) return h('div', { class: 'ndcbox warn' }, d.error);
+  if (!d.found) return h('div', { class: 'ndcbox' }, 'Not found in the FDA NDC Directory. You can still fill it in by hand.');
+  return h('div', { class: 'ndcbox' },
+    h('b', {}, d.brand_name || d.generic_name), d.brand_name && d.generic_name && h('span', { class: 'note' }, ` (${d.generic_name})`),
+    h('div', { class: 'note' }, [d.ingredients.map(i => i.strength).join(', '), d.dosage_form, d.route, d.labeler].filter(Boolean).join(' · ')),
+    d.package_description && h('div', { class: 'note faint' }, `${d.package_ndc || d.product_ndc}: ${d.package_description}`),
+    d.marketing_end_date && h('div', { class: 'warn' }, 'Marked as no longer marketed (' + d.marketing_end_date + ')'),
+    h('div', { class: 'note faint' }, 'From the FDA NDC Directory. Check it against the carton.'));
+}
+// does a looked-up carton match this medication?
+function ndcMatches(med, d) {
+  if (!d.found) return null;
+  if (med.ndc) return ndcDigits(med.ndc).startsWith(ndcDigits(d.product_ndc)) || ndcDigits(d.package_ndc || '').startsWith(ndcDigits(med.ndc));
+  const words = [med.name, med.generic].filter(Boolean).map(x => x.toLowerCase());
+  const names = [d.brand_name, d.generic_name].filter(Boolean).map(x => x.toLowerCase());
+  return words.some(w => names.some(n => n.includes(w) || w.includes(n)));
+}
+
 // ---------- Inventory ----------
 async function inventoryPage(openMid) {
   const pats = await api('GET', '/patients');
@@ -436,9 +477,19 @@ function lotDialog(m, l) {
   const opened = h('input', { type: 'date', value: e.opened || '' }), discard = h('input', { type: 'date', value: e.discard_by || '' });
   const loc = txt(e.location ?? (m.storage === 'fridge' ? 'Fridge' : '')), notes = txt(e.notes), refill = chk(isNew && m.refills_left > 0), ship = h('input', { type: 'date', value: '' });
   const scanMsg = h('div', { class: 'note' });
+  const checkCarton = async v => {
+    if (!v) return;
+    fill(scanMsg, h('div', { class: 'ndcbox note' }, 'Looking up the carton…'));
+    const d = await lookupNdc(v), ok = ndcMatches(m, d);
+    fill(scanMsg, ndcInfo(d),
+      ok === false && h('div', { class: 'errbox' }, `This carton is ${d.brand_name || d.generic_name}, not ${m.name}. Check you scanned the right box.`),
+      ok === true && h('div', { class: 'note ok' }, '✓ Matches ' + m.name),
+      d.found && ok !== false && isNew && d.suggest.per_carton && m.form !== 'multi_vial' && h('div', { class: 'note' }, `The carton holds ${d.suggest.per_carton}; quantity set to match.`));
+    if (d.found && ok !== false) { if (!ndc.value || ndcDigits(ndc.value) === ndcDigits(v)) ndc.value = d.package_ndc || ndc.value; if (isNew && d.suggest.per_carton && m.form !== 'multi_vial') qty.value = d.suggest.per_carton; }
+  };
   const scan = () => scanDialog(r => {
     if (r.lot) lot.value = r.lot; if (r.expires) exp.value = r.expires; if (r.ndc) ndc.value = r.ndc;
-    scanMsg.textContent = r.ndc && m.ndc && r.ndc.replace(/-/g, '') !== m.ndc.replace(/-/g, '') ? `Heads-up: scanned NDC ${r.ndc} doesn't match this medication's NDC ${m.ndc}.` : 'Filled in from the carton barcode. Check it before saving.';
+    if (r.ndc) checkCarton(r.ndc); else scanMsg.textContent = 'Filled in from the carton barcode. Check it before saving.';
   });
   const save = async ev => {
     ev.preventDefault();
@@ -454,7 +505,7 @@ function lotDialog(m, l) {
     h('div', { class: 'two' }, field('Lot number', lot), field('Expires', exp)),
     h('div', { class: 'two' }, field(`Quantity received (${FORM_UNIT[m.form]})`, qty), isNew ? field('Received', rec) : field(`Left (${FORM_UNIT[m.form]})`, left)),
     !isNew && m.form === 'multi_vial' && h('div', { class: 'two' }, field('Opened', opened), field('Discard by', discard)),
-    h('div', { class: 'two' }, field('Where it\'s kept', loc), field('NDC', ndc)), field('Notes', notes),
+    field('Where it\'s kept', loc), h('div', { class: 'field' }, h('span', {}, 'NDC'), h('div', { class: 'row ndcrow' }, ndc, h('button', { type: 'button', onclick: () => checkCarton(ndc.value) }, 'Look up'))), field('Notes', notes),
     isNew && h('label', { class: 'row note' }, refill, `This used a refill (${m.refills_left ?? 0} left)`),
     isNew && field('Next shipment expected (optional)', ship),
     btns(del && h('button', { type: 'button', class: 'danger', onclick: del }, 'Delete'), h('button', { type: 'button', onclick: () => { dlg.close(); if (location.hash.startsWith('#receive')) go('inventory'); } }, 'Cancel'), h('button', { class: 'primary', type: 'submit' }, 'Save'))));
@@ -664,6 +715,8 @@ async function settingsPage(host = main) {
     card('Email', h('div', { class: 'two' }, text('smtp_host', 'SMTP server'), text('smtp_port', 'Port', 'number', '587 (STARTTLS) or 465 (TLS)')),
       h('div', { class: 'two' }, text('smtp_user', 'User name'), secret('smtp_pass', 'Password')), text('smtp_from', 'From address', 'email'),
       h('div', { class: 'row' }, test('/settings/test-email', 'Send me a test email'))),
+    card('Drug lookup', h('p', { class: 'note' }, 'When a carton is scanned or an NDC is entered, ShotTracker looks it up in the FDA NDC Directory (api.fda.gov) to fill in the drug and check shipments. Only the NDC number is sent.'),
+      toggle('ndc_lookup', 'Look up scanned NDCs with the FDA'), secret('openfda_key', 'openFDA API key (optional)', 'Not needed for a household. Without a key the FDA allows about 1,000 lookups a day; lookups are also saved here for 30 days.')),
     card('Backups', h('p', { class: 'note' }, 'A nightly encrypted copy of everything, kept in the app\'s volume. You need the passphrase to restore, including on a new install. Keep it in your password manager.'),
       secret('backup_pass', 'Backup passphrase (12+ characters)'), h('div', { class: 'two' }, time('backup_time', 'Nightly at'), text('backup_keep', 'Keep this many', 'number')),
       h('div', { class: 'row' }, h('button', { type: 'button', onclick: async () => { try { await api('POST', '/backups'); render(); } catch (x) { showErr(err, x); } } }, 'Back up now')),
@@ -677,7 +730,7 @@ async function settingsPage(host = main) {
 const SETTINGS_TABS = [
   { id: 'general', label: 'General', show: u => u.role === 'admin', view: host => settingsPage(host) },
   { id: 'users', label: 'Users', show: u => u.role === 'admin', view: host => usersPage(host) },
-  { id: 'nfc', label: 'NFC tags', show: u => ['admin', 'caregiver'].includes(u.role), view: async host => fill(host, h('div', { class: 'page' }, await tagsCard())) },
+  { id: 'nfc', label: 'NFC tags', show: u => u.role === 'admin', view: async host => fill(host, h('div', { class: 'page' }, await tagsCard())) },
   { id: 'activity', label: 'Activity', show: u => u.role === 'admin', view: host => activityPage(host) },
 ];
 async function settingsHub(tab) {
