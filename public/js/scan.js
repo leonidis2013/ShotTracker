@@ -1,6 +1,9 @@
 // Scan the 2D barcode (GS1 DataMatrix) on a medication carton and pull out the NDC, lot and expiration date.
-// Uses the browser's own barcode reader where it has one, else the bundled ZXing reader (vendor/zxing.min.js,
-// added when the Docker image is built), else lets you paste or type what a scanner app read.
+// Readers, in order: the browser's own BarcodeDetector (Android Chrome), else the bundled ZXing reader
+// (vendor/zxing.min.js, added when the Docker image is built; this is the iPhone path), else typed/pasted text.
+// Carton codes are small and dense, so live scanning asks for a high-resolution feed, zooms in (iPhone Pro
+// cameras can't focus closer than ~20 cm without the Camera app's macro mode), and decodes an enlarged crop of
+// the middle of the frame. "Take a photo" uses the phone's own camera app (macro, tap to focus) and decodes the still.
 
 // GS1 Application Identifiers we care about, with fixed lengths where they have one
 const FIXED = { '00': 18, '01': 14, '02': 14, '11': 6, '12': 6, '13': 6, '15': 6, '16': 6, '17': 6, '20': 2 };
@@ -37,6 +40,86 @@ export function parseGS1(raw) {
   return r;
 }
 
+// ---------- decoding with ZXing (pure functions; tests call these directly) ----------
+// RGBA pixels -> luminance
+export function luma(rgba) {
+  const n = rgba.length >> 2, out = new Uint8ClampedArray(n);
+  for (let i = 0, j = 0; i < n; i++, j += 4) out[i] = (rgba[j] * 77 + rgba[j + 1] * 150 + rgba[j + 2] * 29) >> 8;
+  return out;
+}
+export function makeReaders(Z) {
+  const hints = new Map();
+  hints.set(Z.DecodeHintType.TRY_HARDER, true);
+  hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.DATA_MATRIX, Z.BarcodeFormat.QR_CODE]);
+  const readers = [new Z.DataMatrixReader()];
+  if (Z.QRCodeReader) readers.push(new Z.QRCodeReader());
+  return { hints, readers };
+}
+// try each reader on a luminance image; returns the text or null
+export function decodeLuma(Z, R, lum, w, h) {
+  for (const bin of [Z.HybridBinarizer, Z.GlobalHistogramBinarizer]) {
+    const bmp = new Z.BinaryBitmap(new bin(new Z.RGBLuminanceSource(lum, w, h)));
+    for (const rd of R.readers) { try { return rd.decode(bmp, R.hints).getText(); } catch (e) { /* not found here */ } finally { try { rd.reset(); } catch (e) {} } }
+  }
+  return null;
+}
+// ZXing only finds a DataMatrix near the middle of the image it's given, so we first look for spots that
+// look like a 2D code (a dense, high-contrast square with a quieter border) and decode a window centered on each.
+export function findSpots(lum, w, h, max = 30) {
+  const c = Math.max(2, Math.round(Math.min(w, h) / 80)), gw = Math.floor(w / c), gh = Math.floor(h / c);
+  const e = new Float32Array(gw * gh);
+  for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+    let s = 0, x0 = gx * c, y0 = gy * c;
+    for (let y = y0; y < y0 + c && y < h - 1; y++) for (let x = x0; x < x0 + c && x < w - 1; x++) { const i = y * w + x, v = lum[i]; s += Math.abs(v - lum[i + 1]) + Math.abs(v - lum[i + w]); }
+    e[gy * gw + gx] = s / (c * c);
+  }
+  // integral image for fast box sums
+  const I = new Float64Array((gw + 1) * (gh + 1));
+  for (let y = 0; y < gh; y++) { let row = 0; for (let x = 0; x < gw; x++) { row += e[y * gw + x]; I[(y + 1) * (gw + 1) + x + 1] = I[y * (gw + 1) + x + 1] + row; } }
+  const box = (x0, y0, x1, y1) => I[y1 * (gw + 1) + x1] - I[y0 * (gw + 1) + x1] - I[y1 * (gw + 1) + x0] + I[y0 * (gw + 1) + x0];
+  const out = [];
+  for (const r of [2, 4, 7]) {           // half-size of the square in cells
+    const k = 2 * r + 1, sc = [];
+    for (let y = r; y < gh - r; y++) for (let x = r; x < gw - r; x++) {
+      const inner = box(x - r, y - r, x + r + 1, y + r + 1) / (k * k);
+      // a code is a dense square with a quieter border around it
+      const R2 = Math.round(r * 1.6), x0 = Math.max(0, x - R2), y0 = Math.max(0, y - R2), x1 = Math.min(gw, x + R2 + 1), y1 = Math.min(gh, y + R2 + 1);
+      const ring = (box(x0, y0, x1, y1) - inner * k * k) / Math.max(1, (x1 - x0) * (y1 - y0) - k * k);
+      sc.push([inner - 0.6 * ring, x, y]);
+    }
+    sc.sort((a, b) => b[0] - a[0]);
+    const taken = [];
+    for (const [s, x, y] of sc) {
+      if (taken.length >= max / 3) break;
+      if (taken.some(t => Math.abs(t[0] - x) <= r && Math.abs(t[1] - y) <= r)) continue;
+      taken.push([x, y]); out.push({ score: s, cx: (x + 0.5) * c, cy: (y + 0.5) * c, size: k * c });
+    }
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+
+// draw part of an image/video into the canvas at dw x dh (the browser scales it smoothly) and return its luminance
+function grab(canvas, src, sx, sy, sw, sh, dw, dh) {
+  canvas.width = dw; canvas.height = dh;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, dw, dh);
+  ctx.drawImage(src, sx, sy, sw, sh, 0, 0, dw, dh);
+  return luma(ctx.getImageData(0, 0, dw, dh).data);
+}
+// windows to try on a w x h picture: the middle first (where the guide box is), then the code-like spots
+function* windows(canvas, src, w, h, { maxSpots, overview, outMin, outMax, center = true }) {
+  const m = Math.min(w, h);
+  if (center) for (const c of [0.45, 0.3]) { const sd = m * c; yield [(w - sd) / 2, (h - sd) / 2, sd, Math.min(outMax, Math.max(outMin, Math.round(sd)))]; }
+  const k = Math.min(1, overview / Math.max(w, h)), dw = Math.round(w * k), dh = Math.round(h * k);
+  const small = grab(canvas, src, 0, 0, w, h, dw, dh);
+  for (const sp of findSpots(small, dw, dh).slice(0, maxSpots)) for (const mul of [2.2, 3.5]) {
+    const sd = sp.size / k * mul;
+    yield [sp.cx / k - sd / 2, sp.cy / k - sd / 2, sd, Math.min(outMax, Math.max(outMin, Math.round(sd * 1.5)))];
+  }
+}
+function decodeWin(Z, R, canvas, src, [sx, sy, sd, out]) { return decodeLuma(Z, R, grab(canvas, src, sx, sy, sd, sd, out, out), out, out); }
+
 let zxingLoad = null;
 const loadZXing = () => zxingLoad ||= new Promise(res => {
   if (window.ZXing) return res(window.ZXing);
@@ -44,50 +127,109 @@ const loadZXing = () => zxingLoad ||= new Promise(res => {
   s.onload = () => res(window.ZXing || null); s.onerror = () => res(null);
   document.head.append(s);
 });
+const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); Object.assign(e, props); kids.forEach(k => e.append(k)); return e; };
 
 export function scanDialog(onResult) {
-  const dlg = document.createElement('dialog'); dlg.className = 'scan';
-  const video = document.createElement('video'); video.setAttribute('playsinline', ''); video.muted = true;
-  const msg = document.createElement('div'); msg.className = 'note'; msg.textContent = 'Starting the camera…';
-  const manual = document.createElement('input'); manual.placeholder = 'Or paste the barcode text, e.g. (01)00312345678906(17)271231(10)AB123';
-  const useBtn = document.createElement('button'); useBtn.type = 'button'; useBtn.textContent = 'Use text';
-  const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Cancel';
-  const h2 = document.createElement('h2'); h2.textContent = 'Scan carton barcode';
-  const row = document.createElement('div'); row.className = 'row'; row.append(manual, useBtn);
-  const row2 = document.createElement('div'); row2.className = 'row actions'; const sp = document.createElement('div'); sp.className = 'grow'; row2.append(sp, close);
-  dlg.append(h2, video, msg, row, row2); document.body.append(dlg); dlg.showModal();
-  let stream = null, stopped = false, zreader = null;
-  const stop = () => { stopped = true; try { zreader && zreader.reset(); } catch {} if (stream) stream.getTracks().forEach(t => t.stop()); dlg.close(); dlg.remove(); };
+  const dlg = el('dialog', { className: 'scan' });
+  const video = el('video', { muted: true, autoplay: true }); video.setAttribute('playsinline', ''); video.setAttribute('muted', '');
+  const guide = el('div', { className: 'guide' }), view = el('div', { className: 'scanview' }, video, guide);
+  const msg = el('div', { className: 'note', textContent: 'Starting the camera…' });
+  const zoomRow = el('div', { className: 'row zoomrow hide' });
+  const photoIn = el('input', { type: 'file', accept: 'image/*', className: 'hide' }); photoIn.setAttribute('capture', 'environment');
+  const photoBtn = el('button', { type: 'button', textContent: 'Take a photo instead', className: 'photobtn' });
+  const manual = el('input', { placeholder: 'Or paste the barcode text, e.g. (01)00312345678906(17)271231(10)AB123' });
+  const useBtn = el('button', { type: 'button', textContent: 'Use text' });
+  const close = el('button', { type: 'button', textContent: 'Cancel' });
+  dlg.append(el('h2', { textContent: 'Scan carton barcode' }), view, msg, zoomRow, photoBtn, photoIn,
+    el('div', { className: 'row' }, manual, useBtn), el('div', { className: 'row actions' }, el('div', { className: 'grow' }), close));
+  document.body.append(dlg); dlg.showModal();
+  let stream = null, stopped = false, timer = null;
+  const stop = () => { stopped = true; clearTimeout(timer); if (stream) stream.getTracks().forEach(t => t.stop()); dlg.close(); dlg.remove(); };
   const done = text => {
     const r = parseGS1(text);
-    if (!r.lot && !r.expires && !r.ndc) { msg.textContent = 'Read a code, but it has no lot or expiration date in it. Try the square 2D code on the carton.'; return false; }
+    if (!r.lot && !r.expires && !r.ndc) { msg.textContent = 'Read a code, but it has no lot or expiration date in it. Aim at the small square 2D code.'; return false; }
+    if (navigator.vibrate) navigator.vibrate(60);
     stop(); onResult(r); return true;
   };
   close.onclick = stop; dlg.addEventListener('cancel', stop);
   useBtn.onclick = () => { if (!done(manual.value)) msg.textContent = 'Couldn\'t find a lot or expiration date in that text.'; };
+  const canvas = document.createElement('canvas');
+  loadZXing(); // start fetching the reader now
 
+  // keep the guide square over the middle of the picture (the part we decode first)
+  const placeGuide = () => {
+    const vw = video.videoWidth, vh = video.videoHeight, bw = view.clientWidth, bh = view.clientHeight; if (!vw || !bw) return;
+    const k = Math.min(bw / vw, bh / vh), dw = vw * k, dh = vh * k, s = Math.min(dw, dh) * 0.45;
+    Object.assign(guide.style, { width: s + 'px', height: s + 'px', left: (bw - s) / 2 + 'px', top: (bh - s) / 2 + 'px' });
+  };
+  video.addEventListener('loadedmetadata', placeGuide); video.addEventListener('resize', placeGuide); window.addEventListener('resize', placeGuide);
+
+  // ----- take a photo with the phone's camera app, then decode the still -----
+  photoBtn.onclick = () => photoIn.click();
+  photoIn.onchange = async () => {
+    const f = photoIn.files[0]; if (!f) return;
+    msg.textContent = 'Reading the photo…';
+    const Z = await loadZXing(); if (!Z) { msg.textContent = 'The barcode reader isn\'t available. Type the lot and expiration date instead.'; return; }
+    let img; try { img = await createImageBitmap(f); } catch { img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = no; i.src = URL.createObjectURL(f); }); }
+    const w = img.width || img.naturalWidth, h = img.height || img.naturalHeight, R = makeReaders(Z);
+    for (const win of windows(canvas, img, w, h, { maxSpots: 30, overview: 900, outMin: 300, outMax: 700 })) {
+      if (stopped) return;
+      const t = decodeWin(Z, R, canvas, img, win);
+      if (t && done(t)) return;
+      await new Promise(r => setTimeout(r, 0)); // keep the page responsive between tries
+    }
+    msg.textContent = 'Couldn\'t find the code in that photo. Try again closer, with the square code sharp and filling more of the picture.';
+    photoIn.value = '';
+  };
+
+  // ----- live camera -----
   (async () => {
-    const formats = ['data_matrix', 'qr_code', 'code_128'];
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    } catch (e) {
+      msg.textContent = e && e.name === 'NotAllowedError' ? 'Camera permission was refused. Use "Take a photo instead" or type the code.' : 'Couldn\'t start the camera. Use "Take a photo instead" or type the code.';
+      view.classList.add('hide'); return;
+    }
+    if (stopped) { stream.getTracks().forEach(t => t.stop()); return; }
+    video.srcObject = stream; try { await video.play(); } catch {}
+    const track = stream.getVideoTracks()[0], caps = track.getCapabilities ? track.getCapabilities() : {};
+    try { if (caps.focusMode && caps.focusMode.includes('continuous')) await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch {}
+    if (caps.zoom && caps.zoom.max > 1) {
+      const levels = [1, 2, 3].filter(z => z >= caps.zoom.min && z <= caps.zoom.max);
+      const setZoom = async z => { try { await track.applyConstraints({ advanced: [{ zoom: z }] }); } catch {} zoomRow.querySelectorAll('button').forEach(b => b.classList.toggle('on', +b.dataset.z === z)); };
+      levels.forEach(z => { const b = el('button', { type: 'button', className: 'sm', textContent: z + '×' }); b.dataset.z = z; b.onclick = () => setZoom(z); zoomRow.append(b); });
+      zoomRow.classList.remove('hide');
+      await setZoom(levels.includes(2) ? 2 : levels[levels.length - 1]);
+    }
+    msg.textContent = 'Point at the small square code, about 15–20 cm (6–8 in) away; the box is the best spot. If it looks blurry, move back a little or use "Take a photo instead".';
+
+    // Android Chrome: the browser's own reader
     if ('BarcodeDetector' in window) {
       try {
-        const ok = (await BarcodeDetector.getSupportedFormats()).filter(f => formats.includes(f));
+        const ok = (await BarcodeDetector.getSupportedFormats()).filter(f => ['data_matrix', 'qr_code'].includes(f));
         if (ok.includes('data_matrix')) {
-          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-          video.srcObject = stream; await video.play();
-          msg.textContent = 'Point the camera at the square 2D code on the carton.';
           const det = new BarcodeDetector({ formats: ok });
-          const loop = async () => { if (stopped) return; try { const c = await det.detect(video); for (const x of c) if (done(x.rawValue)) return; } catch {} setTimeout(loop, 250); };
+          const loop = async () => { if (stopped) return; try { for (const c of await det.detect(video)) if (done(c.rawValue)) return; } catch {} timer = setTimeout(loop, 200); };
           return loop();
         }
-      } catch (e) { if (e.name === 'NotAllowedError') { msg.textContent = 'Camera permission was refused. Type or paste the code instead.'; return; } }
+      } catch {}
     }
+    // iPhone and others: ZXing on enlarged crops of the frame, one region per pass
     const Z = await loadZXing();
-    if (!Z || stopped) { if (!stopped) msg.textContent = 'This browser can\'t read 2D codes here. Type the lot and expiration date, or paste text from a scanner app.'; return; }
-    try {
-      const hints = new Map(); hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.DATA_MATRIX, Z.BarcodeFormat.QR_CODE, Z.BarcodeFormat.CODE_128]); hints.set(Z.DecodeHintType.TRY_HARDER, true);
-      zreader = new Z.BrowserMultiFormatReader(hints, 300);
-      msg.textContent = 'Point the camera at the square 2D code on the carton.';
-      await zreader.decodeFromConstraints({ video: { facingMode: 'environment' } }, video, (res) => { if (res && !stopped) done(res.getText()); });
-    } catch (e) { msg.textContent = e && e.name === 'NotAllowedError' ? 'Camera permission was refused. Type or paste the code instead.' : 'Couldn\'t start the camera. Type or paste the code instead.'; }
+    if (!Z) { msg.textContent = 'This browser can\'t read 2D codes here. Use "Take a photo instead" or type the lot and expiration date.'; return; }
+    const R = makeReaders(Z);
+    const loop = () => {
+      if (stopped) return;
+      if (video.readyState >= 2 && video.videoWidth) {
+        const t0 = performance.now();
+        for (const win of windows(canvas, video, video.videoWidth, video.videoHeight, { maxSpots: 6, overview: 640, outMin: 320, outMax: 640 })) {
+          const t = decodeWin(Z, R, canvas, video, win);
+          if (t && done(t)) return;
+          if (performance.now() - t0 > 250) break; // don't freeze the preview
+        }
+      }
+      timer = setTimeout(loop, 100);
+    };
+    loop();
   })();
 }

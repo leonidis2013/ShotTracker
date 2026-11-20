@@ -5,11 +5,15 @@
 # build still succeeds and the scan screen falls back to typing or pasting the code.
 FROM node:22-alpine AS vendor
 WORKDIR /v
+COPY test/check-zxing.js ./
 RUN mkdir -p out && \
-    (npm install --no-save --no-audit --no-fund --ignore-scripts @zxing/library@0.21.3 && \
-     (cp node_modules/@zxing/library/umd/index.min.js out/zxing.min.js 2>/dev/null || \
-      cp "$(find node_modules/@zxing/library/umd -name '*.min.js' | head -n 1)" out/zxing.min.js) && \
-     echo "ZXing barcode reader bundled") || echo "WARNING: ZXing not bundled; scanning falls back to typed entry"
+    for v in 0.23.0 0.21.3; do \
+      rm -rf node_modules && \
+      npm install --no-save --no-audit --no-fund --ignore-scripts @zxing/library@$v >/dev/null 2>&1 && \
+      cp node_modules/@zxing/library/umd/index.min.js out/zxing.min.js 2>/dev/null && \
+      node check-zxing.js out/zxing.min.js && echo "ZXing $v barcode reader bundled" && break; \
+      rm -f out/zxing.min.js; echo "ZXing $v not usable, trying the next"; \
+    done; [ -f out/zxing.min.js ] || echo "WARNING: ZXing not bundled; scanning falls back to typed entry"
 
 FROM node:22-alpine
 

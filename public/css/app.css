@@ -152,3 +152,9 @@ header nav button { flex:none; }
 .ndcbox { background:var(--card2); border-radius:8px; padding:8px 10px; margin:4px 0 10px; font-size:13px; border-left:3px solid var(--teal); }
 .ndcbox.warn { border-left-color:var(--warn); color:var(--warn); }
 .ndcrow input { flex:1; min-width:0; }
+.scanview { position:relative; background:#000; border-radius:8px; overflow:hidden; margin-bottom:8px; }
+.scanview video { display:block; width:100%; max-height:55vh; object-fit:contain; margin:0 !important; }
+.scanview .guide { position:absolute; border:2px solid var(--teal); border-radius:6px; box-shadow:0 0 0 9999px #0007; pointer-events:none; }
+.zoomrow { justify-content:center; margin:6px 0; }
+.zoomrow button.on { background:var(--acc); color:var(--onacc); }
+.photobtn { width:100%; margin:6px 0 10px; }

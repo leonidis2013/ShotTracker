@@ -68,10 +68,18 @@ The buttons work through Home Assistant's websocket, so no Home Assistant automa
 
 ## Barcode scanning
 
-**Inventory → Receive → Scan carton barcode** reads the square 2D code (GS1 DataMatrix) on the carton and fills in the lot, expiration date and NDC. If you set the NDC on the medication, ShotTracker warns when a scanned carton doesn't match.
-- The camera needs HTTPS, which you get through the proxy or the app's own port.
-- On iPhone, scanning uses a reader that's bundled into the Docker image when it's built.
-- If the camera can't read the code, type the lot and date, or paste the text from a scanner app.
+**Inventory → Receive → Scan carton barcode** (or **Add medication → Scan carton**) reads the small square 2D code (GS1 DataMatrix) on the carton. It fills in the lot, expiration date and NDC, then looks the NDC up with the FDA.
+
+- **Live camera:** point at the small square code from about 15–20 cm (6–8 in). The code doesn't need to be centered, but the box is the best spot. On phones that allow it, the camera starts at 2× zoom so you can hold it back far enough to focus. Newer iPhone Pro cameras can't focus closer than about 20 cm in a web page.
+- **Take a photo instead:** opens the phone's own camera, which has macro and tap-to-focus, and reads the code from the photo. Use this if the live view stays blurry.
+- **Type or paste:** type the lot and expiration date, or paste text from a scanner app.
+
+How it reads codes:
+- **Android Chrome** uses the browser's built-in reader.
+- **iPhone** uses the ZXing reader that's bundled into the Docker image when it's built.
+- **Finding the code:** ZXing only finds a DataMatrix near the middle of what it's given. ShotTracker first looks for spots that look like a 2D code, then decodes a window centered on each one, starting with the most likely.
+- **Wrong medication:** if you set the NDC on the medication, ShotTracker warns when a scanned carton doesn't match.
+- **HTTPS:** the camera needs HTTPS, which you get through the proxy or the app's own port.
 
 ## NFC tags
 
@@ -208,6 +216,7 @@ Every push to `main` runs the tests and publishes `ghcr.io/leonidis2013/shottrac
 
 | Version | Changes |
 | --- | --- |
+| 1.2.1 | Carton scanning fixed: finds the code anywhere in the picture (it previously had to be dead center), asks for a high-resolution camera feed, starts at 2× zoom, adds a guide box and a "Take a photo instead" option |
 | 1.2.0 | Drug lookup by NDC in the FDA NDC Directory: scan a carton to fill in a new medication, and get a warning when a received carton is a different drug; NFC tag setup is admin-only |
 | 1.1.2 | Lot lookup moved to Reports |
 | 1.1.1 | Settings is one screen with tabs: General, Users, NFC tags and Activity (top bar is now Today, Patients, Inventory, Reports, Settings) |

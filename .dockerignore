@@ -1,7 +1,7 @@
 .git
 .github
 node_modules
-test
+test/run.js
 data
 *.md
 *.db
