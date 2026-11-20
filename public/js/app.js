@@ -136,9 +136,7 @@ const PAGES = [
   { id: 'patients', label: 'Patients', show: () => true },
   { id: 'inventory', label: 'Inventory', show: u => u.role !== 'patient' },
   { id: 'reports', label: 'Reports', show: () => true },
-  { id: 'users', label: 'Users', show: u => u.role === 'admin' },
-  { id: 'settings', label: 'Settings', show: u => u.role === 'admin' },
-  { id: 'activity', label: 'Activity', show: u => u.role === 'admin' },
+  { id: 'settings', label: 'Settings', show: u => ['admin', 'caregiver'].includes(u.role) },
 ];
 const route = () => { const [p, ...rest] = (location.hash.slice(1) || 'today').split('/'); return { page: p, args: rest }; };
 const go = hash => { if (location.hash === '#' + hash) render(); else location.hash = hash; };
@@ -436,7 +434,6 @@ async function inventoryPage(openMid) {
   fill(main, h('div', { class: 'page' },
     ...medsBlock, !medsBlock.length && card('Medications', h('div', { class: 'empty' }, 'Add medications on a patient\'s page first.')),
     suppliesCard(supplies),
-    isManager() && await tagsCard(),
     card('Lot lookup', h('p', { class: 'note' }, 'Find every shot given from a lot, for example after a recall notice.'), h('div', { class: 'row' }, search, h('button', { onclick: lookup }, 'Search')), found)));
   if (openMid) { const m = details.flatMap(d => d.medications).find(x => x.id === openMid); if (m) lotDialog(m); }
 }
@@ -588,10 +585,10 @@ async function reportsPage() {
 }
 
 // ---------- Users ----------
-async function usersPage() {
+async function usersPage(host = main) {
   const [list, pats] = await Promise.all([api('GET', '/users'), api('GET', '/patients')]);
   const pname = id => pats.find(p => p.id === id)?.name || '?';
-  fill(main, h('div', { class: 'page' }, card(null,
+  fill(host, h('div', { class: 'page' }, card(null,
     h('div', { class: 'row', style: 'margin-bottom:6px' }, h('h2', { class: 'grow', style: 'margin:0' }, 'Users'), h('button', { class: 'primary sm', onclick: () => userDialog(null, pats) }, '+ Add user')),
     list.map(u => h('div', { class: 'li' },
       h('div', { class: 'grow' }, h('b', {}, u.name), ' ', h('span', { class: 'note' }, '@' + u.username),
@@ -629,7 +626,7 @@ function userDialog(u, pats) {
 }
 
 // ---------- Settings ----------
-async function settingsPage() {
+async function settingsPage(host = main) {
   const s = await api('GET', '/settings'), err = errBox(), msg = h('span', { class: 'note' });
   const inputs = {};
   const text = (k, label, type = 'text', hint) => { inputs[k] = txt(s[k], { type, autocapitalize: 'off' }); return field(label, inputs[k], hint); };
@@ -650,7 +647,7 @@ async function settingsPage() {
     if (!confirm('Replace ALL current data with this backup? A copy of the current data is saved first. ShotTracker restarts.')) return;
     try { await api('POST', '/backups/restore', await f.arrayBuffer(), { 'Content-Type': 'application/octet-stream', ...(restorePass.value ? { 'x-backup-pass': restorePass.value } : {}) }); alert('Restored. ShotTracker is restarting; sign in again in a few seconds.'); setTimeout(() => location.reload(), 4000); } catch (x) { showErr(err, x); }
   };
-  fill(main, h('form', { class: 'page', onsubmit: save }, err,
+  fill(host, h('form', { class: 'page', onsubmit: save }, err,
     card('This app', text('app_url', 'Address people use to open ShotTracker', 'url', 'For example https://shots.yourdomain.lan. Used for links in notifications, email and the calendar feed.')),
     card('Home Assistant',
       h('div', { class: 'row', style: 'margin-bottom:8px' }, h('span', { class: 'note' }, 'Notification buttons link: '), pill(link.status === 'connected' ? 'ok' : link.status === 'error' ? 'bad' : '', link.status || 'off'), link.error && h('span', { class: 'note' }, link.error)),
@@ -670,6 +667,22 @@ async function settingsPage() {
         : h('div', { class: 'note' }, 'No backups yet.'),
       h('div', { class: 'sub-h' }, 'Restore'), h('div', { class: 'two' }, restoreFile, restorePass), h('button', { type: 'button', class: 'danger', onclick: restore }, 'Restore from file')),
     h('div', { class: 'row savebar' }, h('button', { class: 'primary', type: 'submit' }, 'Save settings'), msg)));
+}
+
+// ---------- Settings hub: General, Users, NFC tags, Activity ----------
+const SETTINGS_TABS = [
+  { id: 'general', label: 'General', show: u => u.role === 'admin', view: host => settingsPage(host) },
+  { id: 'users', label: 'Users', show: u => u.role === 'admin', view: host => usersPage(host) },
+  { id: 'nfc', label: 'NFC tags', show: u => ['admin', 'caregiver'].includes(u.role), view: async host => fill(host, h('div', { class: 'page' }, await tagsCard())) },
+  { id: 'activity', label: 'Activity', show: u => u.role === 'admin', view: host => activityPage(host) },
+];
+async function settingsHub(tab) {
+  const tabs = SETTINGS_TABS.filter(t => t.show(state.user));
+  const cur = tabs.find(t => t.id === tab) || tabs[0];
+  const body = h('div');
+  fill(main, h('div', { class: 'page' },
+    h('div', { class: 'seg settings-tabs' }, tabs.map(t => h('button', { class: t.id === cur.id ? 'on' : '', onclick: () => go('settings/' + t.id) }, t.label))), body));
+  await cur.view(body);
 }
 
 // ---------- My account ----------
@@ -715,10 +728,10 @@ async function accountPage() {
 }
 
 // ---------- Activity ----------
-async function activityPage() {
+async function activityPage(host = main) {
   const rows = await api('GET', '/audit');
   const summary = r => { try { const n = r.new ? JSON.parse(r.new) : null; return n ? Object.entries(n).filter(([k, v]) => v != null && v !== '' && !['id', 'created_at', 'updated_at', 'deleted'].includes(k)).slice(0, 6).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ') : ''; } catch { return ''; } };
-  fill(main, h('div', { class: 'page' }, card('Activity (latest 300)',
+  fill(host, h('div', { class: 'page' }, card('Activity (latest 300)',
     h('table', { class: 'tbl' }, rows.map(r => h('tr', {}, h('td', { class: 'note' }, new Date(r.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })), h('td', {}, r.user || 'system'),
       h('td', {}, r.action + (r.tbl ? ' · ' + r.tbl : '') + (r.record ? ' #' + r.record : ''), h('div', { class: 'note faint' }, summary(r)))))))));
 }
@@ -730,6 +743,7 @@ async function render() {
     state.version = s.version; state.user = s.user; $('#hVer').textContent = 'v' + s.version;
     if (!s.user) { $('#nav').classList.add('hide'); $('#meBtn').classList.add('hide'); if (dlg.open) dlg.close(); return s.setup ? setupPage() : loginPage(); }
     let { page, args } = route();
+    if (page === 'users' || page === 'activity') return location.replace('#settings/' + page); // old links
     if (page === 'tag') return openTag(args[0] || '');
     if (page === 'log') { shell('today'); await todayPage(); return logDialog({ schedule_id: +args[0] }); }
     if (page === 'logmed') { shell('today'); await todayPage(); return logDialog({ medication_id: +args[0] }); }
@@ -737,7 +751,7 @@ async function render() {
     const def = PAGES.find(p => p.id === page);
     if (page !== 'patient' && page !== 'account' && (!def || !def.show(s.user))) page = 'today';
     shell(page);
-    await ({ today: todayPage, patients: patientsPage, patient: () => patientPage(+args[0]), inventory: inventoryPage, reports: reportsPage, users: usersPage, settings: settingsPage, activity: activityPage, account: accountPage })[page]();
+    await ({ today: todayPage, patients: patientsPage, patient: () => patientPage(+args[0]), inventory: inventoryPage, reports: reportsPage, settings: () => settingsHub(args[0]), account: accountPage })[page]();
   } catch (e) {
     fill(main, h('div', { class: 'card login' }, h('div', { class: 'errbox' }, e.message), h('button', { onclick: () => render() }, 'Try again')));
   }

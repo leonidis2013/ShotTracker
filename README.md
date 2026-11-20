@@ -40,7 +40,7 @@ Updates: the image is pulled again every time the app restarts (`pull_policy: al
 4. **Settings → Backups:** set a passphrase (keep it in your password manager) and press **Back up now**.
 5. **Patients → Add patient**, then **Add medication**, **Add schedule**, and on **Inventory**, **Receive** your current stock.
 6. **Your name (top right) → Notifications:** pick your phone, set quiet hours, **Send a test**. Optionally make a **calendar link** and subscribe to it on your phone.
-7. **Users:** add your spouse as a caregiver with both patients ticked.
+7. **Settings → Users:** add your spouse as a caregiver with both patients ticked.
 
 ## Reminders
 
@@ -85,7 +85,7 @@ Stick an NFC tag on the fridge door, the medication box or the sharps container.
 | Open a patient | That patient's page |
 | Receive a shipment | Inventory with the "Receive shipment" form open for that medication |
 
-**Set one up:** Inventory → NFC tags → **Add tag**. Name it, choose what it opens, then **Next** to get the tag link (`https://<your address>/t/<code>`).
+**Set one up:** Settings → NFC tags → **Add tag**. Name it, choose what it opens, then **Next** to get the tag link (`https://<your address>/t/<code>`).
 - **Android (Chrome):** press **Write to tag** and hold the tag to the back of the phone.
 - **iPhone:** in the free *NFC Tools* app, choose Write → Add a record → URL, paste the link, then Write and hold the tag near the top of the phone.
 
@@ -195,6 +195,7 @@ Every push to `main` runs the tests and publishes `ghcr.io/leonidis2013/shottrac
 
 | Version | Changes |
 | --- | --- |
+| 1.1.1 | Settings is one screen with tabs: General, Users, NFC tags and Activity (top bar is now Today, Patients, Inventory, Reports, Settings) |
 | 1.1.0 | NFC tags: tap a tag to open ShotTracker to a shot's log screen, Today, a patient, or receiving a shipment; write tags from Android Chrome; tap history |
 | 1.0.0 | Medications, lots and inventory, schedules with dose changes, shot log with dose math and site rotation, body map, barcode scanning, supplies and sharps, alerts, reminders (Home Assistant with action buttons, email, digest), calendar feed, HA sensors, reports with PDF/CSV, per-patient access and patient logins, encrypted backup and restore |
 | 0.1.0 | HTTPS, admin setup, TOTP sign-in, users and roles, patients, encrypted settings, activity log |
