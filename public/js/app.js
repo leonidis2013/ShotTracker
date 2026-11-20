@@ -413,13 +413,6 @@ async function inventoryPage(openMid) {
   const pats = await api('GET', '/patients');
   const details = await Promise.all(pats.map(p => api('GET', '/patients/' + p.id)));
   const supplies = await api('GET', '/supplies');
-  const search = txt('', { placeholder: 'Lot number', autocapitalize: 'characters' }), found = h('div');
-  const lookup = async () => {
-    const r = search.value.trim() ? await api('GET', '/lots/search?q=' + encodeURIComponent(search.value.trim())) : [];
-    fill(found, ...(r.length ? r.map(l => h('div', { class: 'li col' }, h('div', {}, h('b', {}, 'Lot ' + l.lot_number), ' · ', l.patient_name, ': ', l.med_name, l.expires ? ' · exp ' + fmtDateY(l.expires) : ''),
-      l.doses.length ? l.doses.map(x => doseLine(x)) : h('div', { class: 'note' }, 'No shots from this lot.'))) : search.value.trim() ? [h('div', { class: 'note' }, 'No lot matches.')] : []));
-  };
-  search.onkeydown = e => { if (e.key === 'Enter') lookup(); };
   const medsBlock = details.flatMap(d => d.medications.filter(m => m.active).map(m => card(null,
     h('div', { class: 'row' }, h('span', { class: 'dot', style: `background:${d.patient.color}` }), h('b', { class: 'big grow' }, d.patient.name, ': ', m.name),
       d.can_manage && h('button', { class: 'primary sm', onclick: () => lotDialog(m) }, '+ Receive')),
@@ -433,8 +426,7 @@ async function inventoryPage(openMid) {
       : h('div', { class: 'note' }, 'No stock recorded.'))));
   fill(main, h('div', { class: 'page' },
     ...medsBlock, !medsBlock.length && card('Medications', h('div', { class: 'empty' }, 'Add medications on a patient\'s page first.')),
-    suppliesCard(supplies),
-    card('Lot lookup', h('p', { class: 'note' }, 'Find every shot given from a lot, for example after a recall notice.'), h('div', { class: 'row' }, search, h('button', { onclick: lookup }, 'Search')), found)));
+    suppliesCard(supplies)));
   if (openMid) { const m = details.flatMap(d => d.medications).find(x => x.id === openMid); if (m) lotDialog(m); }
 }
 function lotDialog(m, l) {
@@ -553,6 +545,17 @@ async function openTag(code) {
 }
 
 // ---------- Reports ----------
+function lotLookupCard() {
+  const search = txt('', { placeholder: 'Lot number', autocapitalize: 'characters' }), found = h('div');
+  const lookup = async () => {
+    const r = search.value.trim() ? await api('GET', '/lots/search?q=' + encodeURIComponent(search.value.trim())) : [];
+    fill(found, ...(r.length ? r.map(l => h('div', { class: 'li col' }, h('div', {}, h('b', {}, 'Lot ' + l.lot_number), ' · ', l.patient_name, ': ', l.med_name, l.expires ? ' · exp ' + fmtDateY(l.expires) : ''),
+      l.doses.length ? l.doses.map(x => doseLine(x)) : h('div', { class: 'note' }, 'No shots from this lot.'))) : search.value.trim() ? [h('div', { class: 'note' }, 'No lot matches.')] : []));
+  };
+  search.onkeydown = e => { if (e.key === 'Enter') lookup(); };
+  return h('div', { class: 'card no-print' }, h('h2', {}, 'Lot lookup'), h('p', { class: 'note' }, 'Find every shot given from a lot, for example after a recall notice.'), h('div', { class: 'row' }, search, h('button', { onclick: lookup }, 'Search')), found);
+}
+
 async function reportsPage() {
   const pats = await api('GET', '/patients');
   const pSel = sel([['', 'All patients'], ...pats.map(p => [p.id, p.name])], pats.length === 1 ? pats[0].id : '');
@@ -580,7 +583,8 @@ async function reportsPage() {
   fill(main, h('div', { class: 'page' },
     h('div', { class: 'card no-print' }, h('h2', {}, 'Report'), h('div', { class: 'three' }, field('Patient', pSel), field('From', from), field('To', to)),
       h('div', { class: 'row' }, h('button', { onclick: () => window.print() }, 'Print / Save as PDF'), h('button', { onclick: () => { location.href = '/api/export/doses.csv?' + qs(); } }, 'Download CSV'))),
-    out));
+    out,
+    lotLookupCard()));
   run();
 }
 

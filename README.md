@@ -12,11 +12,11 @@ Self-hosted tracker for injectable medications in a household: patients, invento
 | **Logging** | Pre-filled dose, volume to draw (from the concentration), soonest-expiring usable lot, least-recently-used injection site on a body map; given / skipped / missed with reason, reaction and notes; edits and deletes put stock back |
 | **Medications** | Prefilled syringe (default), pen, single-dose vial, multi-dose vial; concentration, route, storage, "good for X days after opening"; prescriber, specialty pharmacy, Rx number, refills left, next shipment |
 | **Schedules** | Every X days / weeks / months or chosen weekdays; time of day; "late after" window; fixed calendar or counted from the last shot; dose changes over time (titration or taper); pause |
-| **Inventory** | Lots with expiration, quantity and location; multi-dose vials get opened and discard-by dates; carton barcode scanning (GS1 DataMatrix: NDC, lot, expiration); supplies that count down per shot; sharps container fill level; lot lookup for recalls |
+| **Inventory** | Lots with expiration, quantity and location; multi-dose vials get opened and discard-by dates; carton barcode scanning (GS1 DataMatrix: NDC, lot, expiration); supplies that count down per shot; sharps container fill level |
 | **Reminders** | Day before (with "take it out of the fridge"), morning of, due now, then repeats until logged; per-person quiet hours; snooze |
 | **Channels** | Home Assistant phone notifications with **Given now** and **Snooze 1 hour** buttons, email reminders and a daily digest, a private calendar feed, and "next shot" sensors in Home Assistant |
 | **Alerts** | Low stock (days of supply), out of stock, expiring and expired lots, opened vials past discard-by, no refills left, late shipment, supplies to reorder, sharps container 80% full |
-| **Reports** | Adherence (on time, late, skipped, missed), every shot with lot and site, print / save as PDF for doctor visits, CSV export |
+| **Reports** | Adherence (on time, late, skipped, missed), every shot with lot and site, print / save as PDF for doctor visits, CSV export, lot lookup for recalls |
 | **People** | Admin, caregiver (manages the patients you tick), patient (sees and logs their own), viewer (read-only) |
 | **NFC tags** | Tap a tag on the fridge to open straight to logging that shot; retarget tags any time without rewriting them |
 | **Safety** | HTTPS, required two-factor sign-in, activity log of every change, nightly encrypted backups with restore |
@@ -195,6 +195,7 @@ Every push to `main` runs the tests and publishes `ghcr.io/leonidis2013/shottrac
 
 | Version | Changes |
 | --- | --- |
+| 1.1.2 | Lot lookup moved to Reports |
 | 1.1.1 | Settings is one screen with tabs: General, Users, NFC tags and Activity (top bar is now Today, Patients, Inventory, Reports, Settings) |
 | 1.1.0 | NFC tags: tap a tag to open ShotTracker to a shot's log screen, Today, a patient, or receiving a shipment; write tags from Android Chrome; tap history |
 | 1.0.0 | Medications, lots and inventory, schedules with dose changes, shot log with dose math and site rotation, body map, barcode scanning, supplies and sharps, alerts, reminders (Home Assistant with action buttons, email, digest), calendar feed, HA sensors, reports with PDF/CSV, per-patient access and patient logins, encrypted backup and restore |
