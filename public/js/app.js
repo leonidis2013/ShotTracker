@@ -67,6 +67,11 @@ function fmtWhen(iso) {
   const day = days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : days === -1 ? 'Yesterday' : fmtDate(d);
   return `${day} ${fmtTime(d)}` + (days > 1 ? ` (in ${days} days)` : '');
 }
+function fmtDay(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), days = Math.round((new Date(ymd(d) + 'T00:00') - new Date(ymd(new Date()) + 'T00:00')) / 864e5);
+  return days === 0 ? 'Today' : days === -1 ? 'Yesterday' : d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', ...(d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+}
 const doseText = (a, u) => a == null ? '' : `${+a} ${u || ''}`.trim();
 const age = bd => { if (!bd) return ''; const b = new Date(bd + 'T00:00'), n = new Date(); let a = n.getFullYear() - b.getFullYear(); if (n < new Date(n.getFullYear(), b.getMonth(), b.getDate())) a--; return a >= 0 ? `${a} yr` : ''; };
 const STATUS = { overdue: ['bad', 'Overdue'], due: ['warn', 'Due now'], today: ['acc', 'Today'], upcoming: ['', 'Upcoming'], paused: ['', 'Paused'], none: ['', 'No date'] };
@@ -165,7 +170,7 @@ async function todayPage() {
       h('div', { class: 'grow' },
         h('div', { class: 'row' }, h('b', {}, s.med_name), doseText(s.dose_amount, s.dose_unit) && h('span', { class: 'note' }, doseText(s.dose_amount, s.dose_unit) + (s.volume_ml != null && s.dose_unit !== 'mL' ? ` · ${s.volume_ml} mL` : '')), statusPill(s.status)),
         h('div', { class: 'note' }, s.paused ? 'Paused' : fmtWhen(s.due_at), s.snoozed_until ? ` · snoozed until ${fmtTime(new Date(s.snoozed_until))}` : '', ' · ', s.describe),
-        s.last_given && h('div', { class: 'note faint' }, 'Last given ' + fmtWhen(s.last_given))),
+        s.last_given && h('div', { class: 'note faint' }, 'Last given ' + fmtDay(s.last_given))),
       v.can_log && !s.paused && h('div', { class: 'col-btns' },
         h('button', { class: s.status === 'upcoming' ? '' : 'primary', onclick: () => logDialog({ schedule_id: s.id }) }, 'Log shot'),
         ['overdue', 'due', 'today'].includes(s.status) && h('button', { class: 'sm', onclick: async () => { await api('POST', `/schedules/${s.id}/snooze`, { minutes: 60 }); render(); } }, 'Snooze 1 hr'))))
@@ -179,7 +184,7 @@ function doseLine(d, onEdit) {
   return h('div', { class: 'li dose' },
     h('div', { class: 'grow' },
       h('div', {}, h('b', {}, d.med_name), ' ', d.patient_name && h('span', { class: 'note' }, d.patient_name), ' ', pill(st[0], st[1])),
-      h('div', { class: 'note' }, [d.given_at ? fmtWhen(d.given_at) : d.due_at ? 'Due ' + fmtWhen(d.due_at) : fmtWhen(d.created_at), doseText(d.amount, d.unit), d.site_name, d.lot_number && 'lot ' + d.lot_number, d.given_by_name && 'by ' + d.given_by_name].filter(Boolean).join(' · ')),
+      h('div', { class: 'note' }, [d.given_at ? fmtDay(d.given_at) : d.due_at ? 'Due ' + fmtDay(d.due_at) : fmtDay(d.created_at), doseText(d.amount, d.unit), d.site_name, d.lot_number && 'lot ' + d.lot_number, d.given_by_name && 'by ' + d.given_by_name].filter(Boolean).join(' · ')),
       (d.reaction || d.notes || d.reason) && h('div', { class: 'note faint' }, [d.reason, d.reaction && 'Reaction: ' + d.reaction, d.notes].filter(Boolean).join(' · '))),
     onEdit && h('button', { class: 'sm', onclick: () => onEdit(d) }, 'Edit'));
 }
@@ -189,7 +194,7 @@ async function logDialog(q, existing) {
   const f = await api('GET', '/log-form?' + new URLSearchParams(Object.entries(q).filter(([, v]) => v != null)));
   const med = f.medication, err = errBox(), e = existing || {};
   const status = sel([['given', 'Given'], ['skipped', 'Skipped'], ['missed', 'Missed']], e.status || 'given');
-  const when = h('input', { type: 'datetime-local', value: localInput(new Date(e.given_at || Date.now())), max: localInput(new Date(Date.now() + 5 * 60e3)) });
+  const when = h('input', { type: 'date', value: ymd(new Date(e.given_at || Date.now())), max: ymd(new Date()) });
   const amount = num(e.amount ?? f.dose_amount), unit = sel(UNITS, e.unit || f.dose_unit || med.conc_unit || 'mg');
   const volInfo = h('div', { class: 'draw' }), warn = h('div', { class: 'warn-line hide' });
   const doseNote = !existing && f.dose_source && f.dose_source !== 'schedule' && h('div', { class: 'note dose-note' },
@@ -233,14 +238,22 @@ async function logDialog(q, existing) {
   const toggle = () => { givenBox.classList.toggle('hide', status.value !== 'given'); otherBox.classList.toggle('hide', status.value === 'given'); };
   amount.oninput = calc; unit.onchange = calc; status.onchange = toggle;
   givenBox.append(
-    field('Given at', when), h('div', { class: 'pair' }, field('Dose', amount), field('Unit', unit)), doseNote, volInfo, warn,
+    field('Date given', when), h('div', { class: 'pair' }, field('Dose', amount), field('Unit', unit)), doseNote || '', volInfo, warn,
     field('Lot', lotSel, f.lots.filter(l => l.usable).length ? null : 'No usable stock recorded. Add a shipment under Inventory.'),
     h('div', { class: 'field' }, h('span', {}, 'Site: ', siteName), map.el, siteNote),
     reactionBox);
   const save = async ev => {
     ev.preventDefault();
     const body = { medication_id: med.id, schedule_id: f.schedule ? f.schedule.id : null, status: status.value, notes: notes.value, reason: reason.value, reaction: reaction.value };
-    if (status.value === 'given') Object.assign(body, { given_at: new Date(when.value).toISOString(), amount: amount.value, unit: unit.value, lot_id: lotSel.value ? +lotSel.value : null, site_id: siteId || null });
+    // only the date matters: today keeps the current time (so the order of entries is right), an unchanged date keeps
+    // the original time, any other day is stored at noon so it never slips to the next or previous day
+    const givenAt = () => {
+      if (existing && existing.given_at && ymd(new Date(existing.given_at)) === when.value) return existing.given_at;
+      if (when.value === ymd(new Date())) return new Date().toISOString();
+      return new Date(when.value + 'T12:00').toISOString();
+    };
+    if (status.value === 'given' && !when.value) return showErr(err, new Error('Pick the date it was given'));
+    if (status.value === 'given') Object.assign(body, { given_at: givenAt(), amount: amount.value, unit: unit.value, lot_id: lotSel.value ? +lotSel.value : null, site_id: siteId || null });
     if (existing) delete body.schedule_id;
     try { await api(existing ? 'PUT' : 'POST', '/doses' + (existing ? '/' + existing.id : ''), body); dlg.close(); if (location.hash.startsWith('#log')) go('today'); else render(); } catch (x) { showErr(err, x); }
   };
@@ -481,13 +494,20 @@ async function inventoryPage(openMid) {
     h('div', { class: 'row' }, h('span', { class: 'dot', style: `background:${d.patient.color}` }), h('b', { class: 'big grow' }, d.patient.name, ': ', m.name),
       d.can_manage && h('button', { class: 'primary sm', onclick: () => lotDialog(m) }, '+ Receive')),
     h('div', { class: 'note' }, `${units(m.form, m.stock)} usable`, m.days_of_supply != null ? ` · about ${m.days_of_supply} days` : '', m.refills_left != null ? ` · ${m.refills_left} refills left` : '', m.next_shipment ? ` · next shipment ${fmtDateY(m.next_shipment)}` : ''),
-    m.lots.length ? h('table', { class: 'tbl' }, h('tr', {}, ['Lot', 'Expires', 'Left', 'Where', ''].map(t => h('th', {}, t))),
-      m.lots.map(l => h('tr', { class: l.usable ? '' : 'dim' },
+    (() => {
+      const active = m.lots.filter(l => l.qty_left > 1e-9), used = m.lots.filter(l => l.qty_left <= 1e-9);
+      const rows = list => list.map(l => h('tr', { class: l.usable ? '' : 'dim' },
         h('td', {}, l.lot_number || '—', l.discard_by && h('div', { class: 'note' }, 'discard ' + fmtDateY(l.discard_by))),
         h('td', { class: l.expires && l.expires < ymd(new Date()) ? 'bad' : '' }, fmtDateY(l.expires) || '—'),
         h('td', {}, `${+l.qty_left}/${+l.qty_received}`), h('td', {}, l.location || ''),
-        h('td', {}, d.can_manage && h('button', { class: 'sm', onclick: () => lotDialog(m, l) }, 'Edit')))))
-      : h('div', { class: 'note' }, 'No stock recorded.'))));
+        h('td', {}, d.can_manage && h('button', { class: 'sm', onclick: () => lotDialog(m, l) }, 'Edit'))));
+      const head = () => h('tr', {}, ['Lot', 'Expires', 'Left', 'Where', ''].map(t => h('th', {}, t)));
+      const usedBox = h('div', { class: 'hide' }, h('table', { class: 'tbl' }, head(), rows(used)));
+      return h('div', {},
+        active.length ? h('table', { class: 'tbl' }, head(), rows(active)) : h('div', { class: 'note' }, used.length ? 'Nothing in stock.' : 'No stock recorded.'),
+        used.length > 0 && h('button', { class: 'sm linkish', onclick: ev => { const open = usedBox.classList.toggle('hide'); ev.currentTarget.textContent = open ? `Show ${used.length} used-up lot${used.length > 1 ? 's' : ''}` : 'Hide used-up lots'; } }, `Show ${used.length} used-up lot${used.length > 1 ? 's' : ''}`),
+        usedBox);
+    })())));
   fill(main, h('div', { class: 'page' },
     ...medsBlock, !medsBlock.length && card('Medications', h('div', { class: 'empty' }, 'Add medications on a patient\'s page first.')),
     suppliesCard(supplies)));
@@ -648,7 +668,7 @@ async function reportsPage() {
         r.by_med.length > 1 && h('table', { class: 'tbl', style: 'margin-top:8px' }, h('tr', {}, ['Medication', 'On time', 'Late', 'Skipped', 'Missed', 'Taken'].map(t => h('th', {}, t))),
           r.by_med.map(x => h('tr', {}, h('td', {}, `${x.patient_name}: ${x.med_name}`), h('td', {}, x.adherence.on_time), h('td', {}, x.adherence.late), h('td', {}, x.adherence.skipped), h('td', {}, x.adherence.missed), h('td', {}, x.adherence.rate != null ? x.adherence.rate + '%' : '—'))))),
       card(`Shots (${r.rows.length})`, r.rows.length ? h('table', { class: 'tbl' }, h('tr', {}, ['Date', 'Patient', 'Medication', 'Status', 'Dose', 'Site', 'Lot', 'Notes'].map(t => h('th', {}, t))),
-        r.rows.map(d => h('tr', {}, h('td', {}, fmtDateY(d.given_at || d.due_at || d.created_at), d.given_at && h('div', { class: 'note' }, fmtTime(new Date(d.given_at)))), h('td', {}, d.patient_name), h('td', {}, d.med_name),
+        r.rows.map(d => h('tr', {}, h('td', {}, fmtDateY(d.given_at || d.due_at || d.created_at)), h('td', {}, d.patient_name), h('td', {}, d.med_name),
           h('td', {}, d.status === 'given' ? (d.timing === 'late' ? 'Late' : 'Given') : d.status[0].toUpperCase() + d.status.slice(1)), h('td', {}, doseText(d.amount, d.unit)), h('td', {}, d.site_name), h('td', {}, d.lot_number),
           h('td', {}, [d.reason, d.reaction && 'Reaction: ' + d.reaction, d.notes].filter(Boolean).join(' · ')))))
         : h('div', { class: 'empty' }, 'Nothing in this range.')));

@@ -452,7 +452,8 @@ function doseOut(d) {
   let timing = null;
   if (d.status === 'given' && d.due_at) {
     const s = q('SELECT grace_min FROM schedules WHERE id=?').get(d.schedule_id) || { grace_min: 120 };
-    timing = new Date(d.given_at) > new Date(new Date(d.due_at).getTime() + s.grace_min * 60e3) ? 'late' : 'on time';
+    const graceEnd = new Date(new Date(d.due_at).getTime() + s.grace_min * 60e3);
+    timing = S.ymd(new Date(d.given_at)) > S.ymd(graceEnd) ? 'late' : 'on time'; // only the date counts
   }
   return { ...d, deleted: undefined, med_name: med.name, form: med.form, patient_name: pat.name, lot_number: lot ? lot.lot_number : '', site_name: site ? site.name : '', given_by_name: by ? by.name : '', timing };
 }
@@ -566,7 +567,8 @@ function icsFor(u) {
     }
     for (const d of q(`SELECT * FROM doses WHERE patient_id=? AND deleted=0 AND status='given' AND given_at>=? ORDER BY given_at`).all(pid, S.addDays(new Date(), -90).toISOString())) {
       const med = getRow('medications', d.medication_id) || { name: 'Shot' }, t = new Date(d.given_at);
-      lines.push('BEGIN:VEVENT', `UID:st-dose-${d.id}@shottracker`, `DTSTAMP:${stamp(new Date())}`, `DTSTART:${stamp(t)}`, `DTEND:${stamp(new Date(t.getTime() + 15 * 60e3))}`,
+      const day = S.ymd(t).replace(/-/g, ''), next = S.ymd(S.addDays(t, 1)).replace(/-/g, '');
+      lines.push('BEGIN:VEVENT', `UID:st-dose-${d.id}@shottracker`, `DTSTAMP:${stamp(new Date())}`, `DTSTART;VALUE=DATE:${day}`, `DTEND;VALUE=DATE:${next}`,
         `SUMMARY:${esc(`✓ ${p.name}: ${med.name} given`)}`, 'TRANSP:TRANSPARENT', 'END:VEVENT');
     }
   }
