@@ -158,3 +158,10 @@ header nav button { flex:none; }
 .zoomrow { justify-content:center; margin:6px 0; }
 .zoomrow button.on { background:var(--acc); color:var(--onacc); }
 .photobtn { width:100%; margin:6px 0 10px; }
+svg.bodymap .site circle.hit { fill:transparent; stroke:none; }
+svg.bodymap .site circle.ring { fill:none; stroke:var(--acc); stroke-width:1.2; opacity:.7; }
+svg.bodymap .site.on circle.dot { fill:var(--acc); stroke:var(--fg); stroke-width:1; }
+svg.bodymap .site circle.dot { fill:var(--teal); stroke:var(--card); stroke-width:.8; }
+svg.bodymap .site.resting circle.dot { fill:var(--faint); } svg.bodymap .site.off circle.dot { fill:none; stroke:var(--faint); }
+dialog .bodymaps .bm { max-width:230px; }
+.site-note { text-align:center; margin-top:2px; }

@@ -1,7 +1,7 @@
 // Front and back body outlines with the patient's injection sites as tappable dots.
 // Sites are placed in percent (0-100) of each figure. Front view: the person's left is on your right.
 const NS = 'http://www.w3.org/2000/svg';
-const s = (tag, attrs = {}, ...kids) => { const el = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, v); kids.forEach(k => el.append(k)); return el; };
+const s = (tag, attrs = {}, ...kids) => { const el = document.createElementNS(NS, tag); for (const [k, v] of Object.entries(attrs)) if (v != null) el.setAttribute(k, v); kids.forEach(k => k && el.append(k)); return el; };
 
 function figure() {
   return s('g', { class: 'fig' },
@@ -14,16 +14,22 @@ function figure() {
     s('path', { d: 'M69 54.5Q60 57.5 51 57L53 97H61Z' }));
 }
 
-export function bodyMap(sites, { selected = null, editable = false, onPick, onPlace } = {}) {
+export function bodyMap(sites, { selected = null, editable = false, nearest = false, onPick, onPlace } = {}) {
   let list = sites, sel = selected;
   const views = ['front', 'back'].map(view => {
     const svg = s('svg', { viewBox: '0 0 100 100', class: 'bodymap' + (editable ? ' editable' : ''), role: 'img', 'aria-label': view + ' view' }, figure(), s('g', { class: 'dots' }));
     svg.addEventListener('click', ev => {
       const dot = ev.target.closest('[data-id]');
       if (dot) { const id = dot.dataset.id; onPick && onPick(/^\d+$/.test(id) ? +id : id); return; }
-      if (!editable || !onPlace) return;
       const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY;
       const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+      if (nearest && onPick) { // tap anywhere on the body: the closest site on this side wins
+        const best = list.filter(x => (x.view || 'front') === view && x.enabled !== false)
+          .map(x => ({ x, d: Math.hypot((x.x ?? 50) - p.x, (x.y ?? 50) - p.y) })).sort((a, b) => a.d - b.d)[0];
+        if (best && best.d < 30) onPick(best.x.id);
+        return;
+      }
+      if (!editable || !onPlace) return;
       onPlace(view, Math.round(Math.max(0, Math.min(100, p.x))), Math.round(Math.max(0, Math.min(100, p.y))));
     });
     return { view, svg };
@@ -36,7 +42,8 @@ export function bodyMap(sites, { selected = null, editable = false, onPick, onPl
       for (const x of list.filter(x => (x.view || 'front') === v.view)) {
         const cls = ['site'], on = String(x.id) === String(sel);
         if (on) cls.push('on'); if (x.resting) cls.push('resting'); if (x.enabled === false) cls.push('off');
-        const c = s('g', { 'data-id': x.id, class: cls.join(' ') }, s('circle', { cx: x.x ?? 50, cy: x.y ?? 50, r: on ? 4.2 : 3.3 }));
+        const cx = x.x ?? 50, cy = x.y ?? 50;
+        const c = s('g', { 'data-id': x.id, class: cls.join(' ') }, s('circle', { cx, cy, r: 8, class: 'hit' }), on && s('circle', { cx, cy, r: 6.5, class: 'ring' }), s('circle', { cx, cy, r: on ? 4.2 : 3.3, class: 'dot' }));
         const t = s('title'); t.textContent = x.name; c.append(t);
         g.append(c);
       }

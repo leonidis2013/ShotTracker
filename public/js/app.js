@@ -188,13 +188,14 @@ async function logDialog(q, existing) {
   const volInfo = h('div', { class: 'draw' }), warn = h('div', { class: 'warn-line hide' });
   const lotSel = sel([['', '— none —'], ...f.lots.filter(l => l.usable || l.id === e.lot_id).map(l => [l.id, `Lot ${l.lot_number || '#' + l.id} · ${units(med.form, l.qty_left)} left` + (l.expires ? ` · exp ${fmtDateY(l.expires)}` : '') + (l.discard_by ? ` · discard ${fmtDateY(l.discard_by)}` : '')])], e.lot_id !== undefined ? e.lot_id : f.lot_id);
   let siteId = e.site_id !== undefined ? e.site_id : f.site_id;
-  const siteName = h('b'), siteList = h('div', { class: 'sites' });
-  const map = bodyMap(f.sites, { selected: siteId, onPick: id => { siteId = id; drawSites(); } });
+  const siteName = h('b'), siteNote = h('div', { class: 'note site-note' });
+  const map = bodyMap(f.sites, { selected: siteId, nearest: true, onPick: id => { siteId = id; drawSites(); } });
   const drawSites = () => {
     map.select(siteId);
-    const s = f.sites.find(x => x.id === siteId); siteName.textContent = s ? s.name : 'none';
-    fill(siteList, ...f.sites.filter(x => x.enabled).map(x => h('button', { type: 'button', class: 'sm site' + (x.id === siteId ? ' on' : '') + (x.resting ? ' resting' : ''), onclick: () => { siteId = x.id; drawSites(); } },
-      x.name, h('small', {}, x.last_used ? (x.days_since === 0 ? 'today' : x.days_since + 'd ago') : 'never'))));
+    const s = f.sites.find(x => x.id === siteId);
+    siteName.textContent = s ? s.name : 'not set';
+    siteNote.textContent = !s ? 'Tap the body where the shot goes.'
+      : (s.last_used ? `Last used ${s.days_since === 0 ? 'today' : s.days_since === 1 ? 'yesterday' : s.days_since + ' days ago'}` : 'Not used yet') + (s.resting ? ` · resting (${s.rest_days} days)` : '') + (s.id === f.site_id ? ' · suggested' : '') + '. Tap the body to change it.';
   };
   const reaction = txt(e.reaction, { placeholder: 'Redness, pain, none…' }), notes = h('textarea', { value: e.notes || '', rows: 2 }), reason = txt(e.reason, { placeholder: 'Why it was skipped or missed' });
   const givenBox = h('div'), otherBox = h('div', {}, field('Reason', reason));
@@ -212,7 +213,7 @@ async function logDialog(q, existing) {
   givenBox.append(
     field('Given at', when), h('div', { class: 'pair' }, field('Dose', amount), field('Unit', unit)), volInfo, warn,
     field('Lot', lotSel, f.lots.filter(l => l.usable).length ? null : 'No usable stock recorded. Add a shipment under Inventory.'),
-    h('div', { class: 'field' }, h('span', {}, 'Site: ', siteName), map.el, siteList),
+    h('div', { class: 'field' }, h('span', {}, 'Site: ', siteName), map.el, siteNote),
     field('Reaction (optional)', reaction));
   const save = async ev => {
     ev.preventDefault();

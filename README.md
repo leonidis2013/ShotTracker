@@ -9,7 +9,7 @@ Self-hosted tracker for injectable medications in a household: patients, invento
 | Area | Features |
 | --- | --- |
 | **Today** | Every patient's next shots with status (overdue, due now, today, upcoming), one-tap **Log shot**, snooze, stock and refill alerts |
-| **Logging** | Pre-filled dose, volume to draw (from the concentration), soonest-expiring usable lot, least-recently-used injection site on a body map; given / skipped / missed with reason, reaction and notes; edits and deletes put stock back |
+| **Logging** | Pre-filled dose, volume to draw (from the concentration), soonest-expiring usable lot, least-recently-used injection site, picked by tapping the body map; given / skipped / missed with reason, reaction and notes; edits and deletes put stock back |
 | **Medications** | Prefilled syringe (default), pen, single-dose vial, multi-dose vial; concentration, route, storage, "good for X days after opening"; prescriber, specialty pharmacy, Rx number, refills left, next shipment |
 | **Schedules** | Every X days / weeks / months or chosen weekdays; time of day; "late after" window; fixed calendar or counted from the last shot; dose changes over time (titration or taper); pause |
 | **Inventory** | Lots with expiration, quantity and location; multi-dose vials get opened and discard-by dates; carton barcode scanning (GS1 DataMatrix: NDC, lot, expiration); supplies that count down per shot; sharps container fill level |
@@ -217,6 +217,7 @@ Every push to `main` runs the tests and publishes `ghcr.io/leonidis2013/shottrac
 
 | Version | Changes |
 | --- | --- |
+| 1.2.3 | Logging a shot: tap the body map where the shot went to pick the site (nearest site wins); the row of site buttons is gone |
 | 1.2.2 | Carton scanning reads light-on-dark (inverted) codes and inkjet-dotted codes, which many medication cartons use; larger search windows for big codes; the live scanner works through every candidate spot |
 | 1.2.1 | Carton scanning fixed: finds the code anywhere in the picture (it previously had to be dead center), asks for a high-resolution camera feed, starts at 2× zoom, adds a guide box and a "Take a photo instead" option |
 | 1.2.0 | Drug lookup by NDC in the FDA NDC Directory: scan a carton to fill in a new medication, and get a warning when a received carton is a different drug; NFC tag setup is admin-only |
