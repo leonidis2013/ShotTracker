@@ -9,7 +9,7 @@ const root = path.join(__dirname, '..'), data = fs.mkdtempSync(path.join(os.tmpd
 const base = 'http://127.0.0.1:' + port;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const S = require('../lib/sched');
-const { parseGS1 } = (() => { const src = fs.readFileSync(path.join(root, 'public/js/scan.js'), 'utf8').replace(/export function/g, 'function') + '\nmodule.exports = { parseGS1 };'; const m = { exports: {} }; new Function('module', 'window', 'document', src)(m, {}, {}); return m.exports; })();
+const { parseGS1 } = (() => { const src = fs.readFileSync(path.join(root, 'public/js/scan.js'), 'utf8').replace(/export /g, '') + '\nmodule.exports = { parseGS1 };'; const m = { exports: {} }; new Function('module', 'window', 'document', 'performance', src)(m, {}, {}, {}); return m.exports; })();
 
 // TOTP the way an authenticator app does it
 const B32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';

@@ -55,6 +55,41 @@ export function makeReaders(Z) {
   if (Z.QRCodeReader) readers.push(new Z.QRCodeReader());
   return { hints, readers };
 }
+// Image clean-ups for real cartons: many print the code light-on-dark (inverted), and inkjet printers make each
+// square a separate round dot, which breaks the solid edges the reader looks for. Shrinking, stretching the
+// contrast and a 1-pixel "min" filter merge the dots back into solid squares.
+export function shrink(lum, w, h, k) {
+  const dw = Math.max(1, Math.round(w * k)), dh = Math.max(1, Math.round(h * k)), o = new Uint8ClampedArray(dw * dh);
+  for (let y = 0; y < dh; y++) { const y0 = Math.floor(y / k), y1 = Math.min(h, Math.max(y0 + 1, Math.floor((y + 1) / k)));
+    for (let x = 0; x < dw; x++) { const x0 = Math.floor(x / k), x1 = Math.min(w, Math.max(x0 + 1, Math.floor((x + 1) / k))); let t = 0;
+      for (let Y = y0; Y < y1; Y++) for (let X = x0; X < x1; X++) t += lum[Y * w + X]; o[y * dw + x] = t / ((y1 - y0) * (x1 - x0)); } }
+  return [o, dw, dh];
+}
+export const invert = lum => lum.map(v => 255 - v);
+export function stretch(lum) {
+  const hist = new Uint32Array(256); for (const v of lum) hist[v]++;
+  let lo = 0, hi = 255, acc = 0; const cut = lum.length * 0.02;
+  for (; lo < 255 && (acc += hist[lo]) < cut; lo++); acc = 0; for (; hi > 0 && (acc += hist[hi]) < cut; hi--);
+  const k = 255 / Math.max(1, hi - lo); return lum.map(v => (v - lo) * k);
+}
+export function merge(lum, w, h) { // 3x3 min filter: grows dark dots so neighbors touch
+  const t = new Uint8ClampedArray(lum.length), o = new Uint8ClampedArray(lum.length);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = y * w + x; t[i] = Math.min(lum[i], x > 0 ? lum[i - 1] : 255, x < w - 1 ? lum[i + 1] : 255); }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const i = y * w + x; o[i] = Math.min(t[i], y > 0 ? t[i - w] : 255, y < h - 1 ? t[i + w] : 255); }
+  return o;
+}
+// every way we try a window, most likely first
+export function decodeAny(Z, R, lum, w, h) {
+  for (const k of [1, 0.5, 0.33, 0.25]) {
+    const [s, sw, sh] = k === 1 ? [lum, w, h] : shrink(lum, w, h, k);
+    if (sw < 60) break;
+    const tries = k === 1 ? [() => s, () => invert(s), () => merge(stretch(invert(s)), sw, sh), () => merge(stretch(s), sw, sh)]
+      : [() => merge(stretch(invert(s)), sw, sh), () => merge(stretch(s), sw, sh), () => stretch(invert(s)), () => stretch(s)];
+    for (const t of tries) { const r = decodeLuma(Z, R, t(), sw, sh); if (r) return r; }
+  }
+  return null;
+}
+
 // try each reader on a luminance image; returns the text or null
 export function decodeLuma(Z, R, lum, w, h) {
   for (const bin of [Z.HybridBinarizer, Z.GlobalHistogramBinarizer]) {
@@ -110,15 +145,14 @@ function grab(canvas, src, sx, sy, sw, sh, dw, dh) {
 // windows to try on a w x h picture: the middle first (where the guide box is), then the code-like spots
 function* windows(canvas, src, w, h, { maxSpots, overview, outMin, outMax, center = true }) {
   const m = Math.min(w, h);
-  if (center) for (const c of [0.45, 0.3]) { const sd = m * c; yield [(w - sd) / 2, (h - sd) / 2, sd, Math.min(outMax, Math.max(outMin, Math.round(sd)))]; }
+  if (center) for (const c of [0.6, 0.45, 0.3]) { const sd = m * c; yield [(w - sd) / 2, (h - sd) / 2, sd, Math.min(outMax, Math.max(outMin, Math.round(sd)))]; }
   const k = Math.min(1, overview / Math.max(w, h)), dw = Math.round(w * k), dh = Math.round(h * k);
   const small = grab(canvas, src, 0, 0, w, h, dw, dh);
-  for (const sp of findSpots(small, dw, dh).slice(0, maxSpots)) for (const mul of [2.2, 3.5]) {
-    const sd = sp.size / k * mul;
+  for (const sp of findSpots(small, dw, dh).slice(0, maxSpots)) for (const sd of [sp.size / k * 2.2, sp.size / k * 3.5, Math.max(sp.size / k * 5, m * 0.5)]) {
     yield [sp.cx / k - sd / 2, sp.cy / k - sd / 2, sd, Math.min(outMax, Math.max(outMin, Math.round(sd * 1.5)))];
   }
 }
-function decodeWin(Z, R, canvas, src, [sx, sy, sd, out]) { return decodeLuma(Z, R, grab(canvas, src, sx, sy, sd, sd, out, out), out, out); }
+function decodeWin(Z, R, canvas, src, [sx, sy, sd, out]) { return decodeAny(Z, R, grab(canvas, src, sx, sy, sd, sd, out, out), out, out); }
 
 let zxingLoad = null;
 const loadZXing = () => zxingLoad ||= new Promise(res => {
@@ -217,18 +251,21 @@ export function scanDialog(onResult) {
     // iPhone and others: ZXing on enlarged crops of the frame, one region per pass
     const Z = await loadZXing();
     if (!Z) { msg.textContent = 'This browser can\'t read 2D codes here. Use "Take a photo instead" or type the lot and expiration date.'; return; }
-    const R = makeReaders(Z);
+    const R = makeReaders(Z); let cursor = 0;
     const loop = () => {
       if (stopped) return;
       if (video.readyState >= 2 && video.videoWidth) {
+        // each pass gets ~400 ms; the next pass carries on from the next window, so every spot gets its turn
+        const wins = [...windows(canvas, video, video.videoWidth, video.videoHeight, { maxSpots: 6, overview: 640, outMin: 320, outMax: 640 })];
         const t0 = performance.now();
-        for (const win of windows(canvas, video, video.videoWidth, video.videoHeight, { maxSpots: 6, overview: 640, outMin: 320, outMax: 640 })) {
+        for (let j = 0; j < wins.length; j++) {
+          const win = wins[(cursor + j) % wins.length];
           const t = decodeWin(Z, R, canvas, video, win);
           if (t && done(t)) return;
-          if (performance.now() - t0 > 250) break; // don't freeze the preview
+          if (performance.now() - t0 > 400) { cursor = (cursor + j + 1) % wins.length; break; }
         }
       }
-      timer = setTimeout(loop, 100);
+      timer = setTimeout(loop, 60);
     };
     loop();
   })();

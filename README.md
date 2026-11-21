@@ -78,6 +78,7 @@ How it reads codes:
 - **Android Chrome** uses the browser's built-in reader.
 - **iPhone** uses the ZXing reader that's bundled into the Docker image when it's built.
 - **Finding the code:** ZXing only finds a DataMatrix near the middle of what it's given. ShotTracker first looks for spots that look like a 2D code, then decodes a window centered on each one, starting with the most likely.
+- **Carton printing:** many cartons print the code light-on-dark, with each square as a separate inkjet dot. ShotTracker also tries each window inverted, and with the dots merged back into solid squares at a few sizes.
 - **Wrong medication:** if you set the NDC on the medication, ShotTracker warns when a scanned carton doesn't match.
 - **HTTPS:** the camera needs HTTPS, which you get through the proxy or the app's own port.
 
@@ -216,6 +217,7 @@ Every push to `main` runs the tests and publishes `ghcr.io/leonidis2013/shottrac
 
 | Version | Changes |
 | --- | --- |
+| 1.2.2 | Carton scanning reads light-on-dark (inverted) codes and inkjet-dotted codes, which many medication cartons use; larger search windows for big codes; the live scanner works through every candidate spot |
 | 1.2.1 | Carton scanning fixed: finds the code anywhere in the picture (it previously had to be dead center), asks for a high-resolution camera feed, starts at 2× zoom, adds a guide box and a "Take a photo instead" option |
 | 1.2.0 | Drug lookup by NDC in the FDA NDC Directory: scan a carton to fill in a new medication, and get a warning when a received carton is a different drug; NFC tag setup is admin-only |
 | 1.1.2 | Lot lookup moved to Reports |
