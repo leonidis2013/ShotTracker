@@ -217,6 +217,7 @@ Every push to `main` runs the tests and publishes `ghcr.io/leonidis2013/shottrac
 
 | Version | Changes |
 | --- | --- |
+| 1.2.4 | Logging a shot: the dose fills in from the schedule, else the last shot, else one full syringe; reaction is a list of common reactions with Other for typing your own, and a 911 warning for signs of a serious allergic reaction |
 | 1.2.3 | Logging a shot: tap the body map where the shot went to pick the site (nearest site wins); the row of site buttons is gone |
 | 1.2.2 | Carton scanning reads light-on-dark (inverted) codes and inkjet-dotted codes, which many medication cartons use; larger search windows for big codes; the live scanner works through every candidate spot |
 | 1.2.1 | Carton scanning fixed: finds the code anywhere in the picture (it previously had to be dead center), asks for a high-resolution camera feed, starts at 2× zoom, adds a guide box and a "Take a photo instead" option |

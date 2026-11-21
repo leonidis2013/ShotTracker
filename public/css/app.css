@@ -165,3 +165,5 @@ svg.bodymap .site circle.dot { fill:var(--teal); stroke:var(--card); stroke-widt
 svg.bodymap .site.resting circle.dot { fill:var(--faint); } svg.bodymap .site.off circle.dot { fill:none; stroke:var(--faint); }
 dialog .bodymaps .bm { max-width:230px; }
 .site-note { text-align:center; margin-top:2px; }
+.dose-note { margin:-2px 0 6px; }
+.reaction-other { width:100%; margin:-2px 0 8px; }

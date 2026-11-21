@@ -197,7 +197,17 @@ const until = async (fn, ms = 8000) => { const t = Date.now(); while (Date.now()
     await A('DELETE', '/api/doses/' + r.body.id);
     lots = (await A('GET', '/api/patients/' + dad)).body.medications[0].lots; assert.strictEqual(lots.find(l => l.id === old1).qty_left, 1, 'delete restores stock');
 
-    // ----- multi-dose vial: opened date + discard-by -----
+    // ----- dose fill-in when the schedule has none: one full syringe, then the last shot's dose -----
+    r = await A('POST', '/api/meds', { patient_id: kid, name: 'Xolair PFS', form: 'syringe', conc: 150, conc_unit: 'mg', unit_ml: 1 }); const xo = r.body.id;
+    await A('POST', '/api/lots', { medication_id: xo, lot_number: 'XO1', qty_received: 4, expires: '2099-01-01' });
+    r = await A('POST', '/api/schedules', { medication_id: xo, kind: 'months', every: 1, start_date: S.ymd(S.addDays(new Date(), 5)) }); const xs = r.body.id;
+    r = await A('GET', '/api/log-form?schedule_id=' + xs); assert.deepStrictEqual([r.body.dose_amount, r.body.dose_unit, r.body.dose_source, r.body.volume_ml], [150, 'mg', 'unit', 1]);
+    await A('POST', '/api/doses', { medication_id: xo, status: 'given', amount: 300, unit: 'mg', lot_id: null, reaction: 'Redness' });
+    r = await A('GET', '/api/log-form?schedule_id=' + xs); assert.deepStrictEqual([r.body.dose_amount, r.body.dose_source], [300, 'last']);
+    r = await A('POST', '/api/doses', { medication_id: xo, schedule_id: xs, status: 'given' }); assert.strictEqual(r.body.amount, 300, 'logged without an amount uses the same fill-in');
+    await A('DELETE', '/api/doses/' + r.body.id);
+
+
     r = await A('POST', '/api/meds', { patient_id: kid, name: 'Vialmed', form: 'multi_vial', conc: 50, conc_unit: 'mg', unit_ml: 2, opened_days: 28, storage: 'fridge' }); const vm = r.body.id;
     await A('POST', '/api/lots', { medication_id: vm, lot_number: 'V1', expires: '2099-01-01', qty_received: 2 });
     r = await A('POST', '/api/doses', { medication_id: vm, status: 'given', amount: 25, unit: 'mg' }); assert.strictEqual(r.body.volume_ml, 0.5); assert.strictEqual(r.body.qty_used, 0.5);

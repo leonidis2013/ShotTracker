@@ -419,7 +419,7 @@ function buildDose(u, b, base = {}) {
   if (merged.lot_id) { const l = getRow('lots', merged.lot_id); if (!l || l.medication_id !== med.id) throw httpErr(400, 'That lot is not for this medication'); }
   if (merged.site_id) { const s = q('SELECT * FROM sites WHERE id=?').get(merged.site_id); if (!s || s.patient_id !== med.patient_id) throw httpErr(400, 'That site is not for this patient'); }
   if (merged.status === 'given') {
-    if (merged.amount == null && sched) { const d = S.doseFor(sched, stepsFor(sched.id), new Date(merged.due_at || merged.given_at)); merged.amount = d.amount; merged.unit = d.unit; }
+    if (merged.amount == null) { const d = defaultDose(med, sched, new Date(merged.due_at || merged.given_at)); merged.amount = d.amount; merged.unit = d.unit; }
     merged.volume_ml = volumeFor(med, merged.amount, merged.unit);
     if (v.qty_used == null && (v.amount !== undefined || v.lot_id !== undefined || !base.id)) merged.qty_used = qtyFor(med, merged.volume_ml);
   } else { merged.lot_id = null; merged.site_id = null; merged.qty_used = null; merged.volume_ml = null; }
@@ -499,6 +499,15 @@ function todayView(u) {
   });
 }
 
+// dose to pre-fill: the schedule's, else the last shot's, else one full syringe/pen/vial
+function defaultDose(med, sched, date) {
+  if (sched) { const d = S.doseFor(sched, stepsFor(sched.id), date); if (d.amount != null) return { ...d, source: 'schedule' }; }
+  const last = q(`SELECT amount, unit FROM doses WHERE medication_id=? AND deleted=0 AND status='given' AND amount IS NOT NULL ORDER BY given_at DESC, id DESC LIMIT 1`).get(med.id);
+  if (last) return { amount: last.amount, unit: last.unit, source: 'last' };
+  if (med.form !== 'multi_vial' && med.conc && med.unit_ml) return { amount: round(med.conc * med.unit_ml, 3), unit: med.conc_unit, source: 'unit' };
+  return { amount: null, unit: med.conc_unit || 'mg', source: null };
+}
+
 // defaults for the log form
 function logForm(u, { schedule_id, medication_id }) {
   let sched = schedule_id ? getRow('schedules', schedule_id) : null;
@@ -506,11 +515,13 @@ function logForm(u, { schedule_id, medication_id }) {
   mustLog(u, med.patient_id);
   if (!sched) sched = schedulesFor(med.id).find(s => !s.paused) || null;
   const info = sched ? schedInfo(sched) : null;
-  const dose = sched ? S.doseFor(sched, stepsFor(sched.id), info.due_at ? new Date(info.due_at) : new Date()) : { amount: null, unit: med.conc_unit || 'mg' };
+  const dose = defaultDose(med, sched, info && info.due_at ? new Date(info.due_at) : new Date());
+  const schedDose = sched ? S.doseFor(sched, stepsFor(sched.id), info.due_at ? new Date(info.due_at) : new Date()) : null;
   const vol = volumeFor(med, dose.amount, dose.unit), qty = qtyFor(med, vol);
   const lots = lotsFor(med.id).map(l => ({ ...l, usable: lotUsable(l) })), lot = pickLot(med, qty);
   const sites = siteUsage(med.patient_id), site = suggestSite(med.patient_id);
-  return { medication: medOut(med), schedule: info, dose_amount: dose.amount, dose_unit: dose.unit, volume_ml: vol, qty_used: qty,
+  return { medication: medOut(med), schedule: info, dose_amount: dose.amount, dose_unit: dose.unit, dose_source: dose.source,
+    schedule_dose: schedDose && schedDose.amount != null ? schedDose : null, volume_ml: vol, qty_used: qty,
     lots, lot_id: lot ? lot.id : null, sites, site_id: site ? site.id : null, patient: patientOut(getRow('patients', med.patient_id)) };
 }
 

@@ -8,6 +8,12 @@ const COLORS = ['#4c8dff', '#2ec4b6', '#f2c94c', '#ef4c4c', '#3ecf6e', '#b07cff'
 const FORMS = { syringe: 'Prefilled syringe', pen: 'Pen', single_vial: 'Single-dose vial', multi_vial: 'Multi-dose vial' };
 const FORM_UNIT = { syringe: 'syringes', pen: 'pens', single_vial: 'vials', multi_vial: 'mL' };
 const UNITS = ['mg', 'mcg', 'units', 'mL'];
+// common injection reactions; the stored text is the label, so reports read naturally
+const REACTIONS = [['', 'None'], ['Redness', 'Redness'], ['Swelling', 'Swelling'], ['Pain or soreness', 'Pain or soreness'], ['Itching', 'Itching'],
+  ['Bruising', 'Bruising'], ['Bleeding', 'Bleeding'], ['Warmth', 'Warmth'], ['Lump or hardness', 'Lump or hardness'], ['Hives or rash', 'Hives or rash'],
+  ['Headache', 'Headache'], ['Tiredness', 'Tiredness'], ['Dizziness or lightheaded', 'Dizziness or lightheaded'], ['Nausea', 'Nausea'],
+  ['Trouble breathing or throat/face swelling', 'Trouble breathing or throat/face swelling'], ['other', 'Other…']];
+const SERIOUS = ['Trouble breathing or throat/face swelling'];
 let state = { user: null, version: '' };
 
 // ---------- tiny DOM helpers ----------
@@ -186,6 +192,9 @@ async function logDialog(q, existing) {
   const when = h('input', { type: 'datetime-local', value: localInput(new Date(e.given_at || Date.now())), max: localInput(new Date(Date.now() + 5 * 60e3)) });
   const amount = num(e.amount ?? f.dose_amount), unit = sel(UNITS, e.unit || f.dose_unit || med.conc_unit || 'mg');
   const volInfo = h('div', { class: 'draw' }), warn = h('div', { class: 'warn-line hide' });
+  const doseNote = !existing && f.dose_source && f.dose_source !== 'schedule' && h('div', { class: 'note dose-note' },
+    f.dose_source === 'last' ? 'Filled in from the last shot. ' : `Filled in as one full ${FORMS[med.form].toLowerCase()}. `,
+    f.schedule && 'Set the dose on the schedule so it\'s always right.');
   const lotSel = sel([['', '— none —'], ...f.lots.filter(l => l.usable || l.id === e.lot_id).map(l => [l.id, `Lot ${l.lot_number || '#' + l.id} · ${units(med.form, l.qty_left)} left` + (l.expires ? ` · exp ${fmtDateY(l.expires)}` : '') + (l.discard_by ? ` · discard ${fmtDateY(l.discard_by)}` : '')])], e.lot_id !== undefined ? e.lot_id : f.lot_id);
   let siteId = e.site_id !== undefined ? e.site_id : f.site_id;
   const siteName = h('b'), siteNote = h('div', { class: 'note site-note' });
@@ -197,24 +206,37 @@ async function logDialog(q, existing) {
     siteNote.textContent = !s ? 'Tap the body where the shot goes.'
       : (s.last_used ? `Last used ${s.days_since === 0 ? 'today' : s.days_since === 1 ? 'yesterday' : s.days_since + ' days ago'}` : 'Not used yet') + (s.resting ? ` · resting (${s.rest_days} days)` : '') + (s.id === f.site_id ? ' · suggested' : '') + '. Tap the body to change it.';
   };
-  const reaction = txt(e.reaction, { placeholder: 'Redness, pain, none…' }), notes = h('textarea', { value: e.notes || '', rows: 2 }), reason = txt(e.reason, { placeholder: 'Why it was skipped or missed' });
+  const known = REACTIONS.find(r => r[0] && r[0] === e.reaction);
+  const reactionSel = sel(REACTIONS.map(r => [r[0] === 'other' ? 'other' : r[0], r[1]]), e.reaction ? (known ? e.reaction : 'other') : '');
+  const reactionOther = txt(known ? '' : e.reaction, { placeholder: 'Describe the reaction', class: 'reaction-other' }), reactionAlert = h('div', { class: 'errbox hide' });
+  const reactionBox = h('div', {}, field('Reaction', reactionSel), reactionOther, reactionAlert);
+  const drawReaction = () => {
+    reactionOther.classList.toggle('hide', reactionSel.value !== 'other');
+    const serious = SERIOUS.includes(reactionSel.value);
+    reactionAlert.textContent = serious ? 'Signs of a serious allergic reaction: call 911 now. Use an epinephrine auto-injector if one was prescribed.' : '';
+    reactionAlert.classList.toggle('hide', !serious);
+    if (reactionSel.value === 'other') reactionOther.focus();
+  };
+  reactionSel.onchange = drawReaction;
+  const reaction = { get value() { return reactionSel.value === 'other' ? reactionOther.value.trim() : reactionSel.value; } };
+  const notes = h('textarea', { value: e.notes || '', rows: 2 }), reason = txt(e.reason, { placeholder: 'Why it was skipped or missed' });
   const givenBox = h('div'), otherBox = h('div', {}, field('Reason', reason));
   const calc = () => {
     const a = parseFloat(amount.value), u = unit.value;
     let vol = null; if (!isNaN(a)) vol = u === 'mL' ? a : (med.conc && u === med.conc_unit ? Math.round(a / med.conc * 1000) / 1000 : null);
     fill(volInfo, vol != null ? h('span', {}, 'Draw / inject ', h('b', {}, vol + ' mL')) : h('span', { class: 'note' }, med.conc ? '' : 'Add the concentration to the medication to see the volume.'));
     const w = [];
-    if (f.schedule && f.dose_amount != null && (a !== +f.dose_amount || u !== f.dose_unit)) w.push(`Scheduled dose is ${doseText(f.dose_amount, f.dose_unit)}.`);
+    const sd = f.schedule_dose; if (sd && (a !== +sd.amount || u !== sd.unit)) w.push(`Scheduled dose is ${doseText(sd.amount, sd.unit)}.`);
     if (vol != null && med.unit_ml && med.form !== 'multi_vial' && vol > med.unit_ml + 1e-6) w.push(`That's more than one ${FORMS[med.form].toLowerCase()} (${med.unit_ml} mL each).`);
     warn.textContent = w.join(' '); warn.classList.toggle('hide', !w.length);
   };
   const toggle = () => { givenBox.classList.toggle('hide', status.value !== 'given'); otherBox.classList.toggle('hide', status.value === 'given'); };
   amount.oninput = calc; unit.onchange = calc; status.onchange = toggle;
   givenBox.append(
-    field('Given at', when), h('div', { class: 'pair' }, field('Dose', amount), field('Unit', unit)), volInfo, warn,
+    field('Given at', when), h('div', { class: 'pair' }, field('Dose', amount), field('Unit', unit)), doseNote, volInfo, warn,
     field('Lot', lotSel, f.lots.filter(l => l.usable).length ? null : 'No usable stock recorded. Add a shipment under Inventory.'),
     h('div', { class: 'field' }, h('span', {}, 'Site: ', siteName), map.el, siteNote),
-    field('Reaction (optional)', reaction));
+    reactionBox);
   const save = async ev => {
     ev.preventDefault();
     const body = { medication_id: med.id, schedule_id: f.schedule ? f.schedule.id : null, status: status.value, notes: notes.value, reason: reason.value, reaction: reaction.value };
@@ -229,7 +251,7 @@ async function logDialog(q, existing) {
       f.schedule && f.schedule.due_at && !existing && h('div', { class: 'note' }, 'Due ' + fmtWhen(f.schedule.due_at), ' ', statusPill(f.schedule.status))),
     err, field('What happened', status), givenBox, otherBox, field('Notes', notes),
     btns(del && h('button', { type: 'button', class: 'danger', onclick: del }, 'Delete'), h('button', { type: 'button', onclick: () => { dlg.close(); if (location.hash.startsWith('#log')) go('today'); } }, 'Cancel'), h('button', { class: 'primary', type: 'submit' }, 'Save'))));
-  calc(); toggle(); drawSites(); dlg.showModal();
+  calc(); toggle(); drawSites(); drawReaction(); reactionOther.blur(); dlg.showModal();
 }
 
 // ---------- Patients ----------
