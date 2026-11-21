@@ -840,6 +840,7 @@ async function activityPage(host = main) {
 async function render() {
   try {
     const s = await api('GET', '/state');
+    if (state.version && s.version !== state.version) { location.reload(); return; } // updated while open: load the new code
     state.version = s.version; state.user = s.user; $('#hVer').textContent = 'v' + s.version;
     if (!s.user) { $('#nav').classList.add('hide'); $('#meBtn').classList.add('hide'); if (dlg.open) dlg.close(); return s.setup ? setupPage() : loginPage(); }
     let { page, args } = route();

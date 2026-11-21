@@ -217,6 +217,7 @@ Every push to `main` runs the tests and publishes `ghcr.io/leonidis2013/shottrac
 
 | Version | Changes |
 | --- | --- |
+| 1.2.6 | Updates take effect on the next reload: the browser rechecks the app's files every time instead of keeping them for 5 minutes, and an open page reloads itself when the server has a newer version |
 | 1.2.5 | Inventory hides used-up lots (Show used-up lots to see them); logging a shot asks only for the date; history, reports and the calendar show given shots by date; on time or late is judged by date |
 | 1.2.4 | Logging a shot: the dose fills in from the schedule, else the last shot, else one full syringe; reaction is a list of common reactions with Other for typing your own, and a 911 warning for signs of a serious allergic reaction |
 | 1.2.3 | Logging a shot: tap the body map where the shot went to pick the site (nearest site wins); the row of site buttons is gone |

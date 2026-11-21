@@ -1,6 +1,6 @@
 {
   "name": "shottracker",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "description": "Self-hosted injectable medication tracker: patients, inventory and lots, schedules, injection log, reminders",
   "main": "server.js",
   "scripts": {

@@ -331,7 +331,8 @@ const until = async (fn, ms = 8000) => { const t = Date.now(); while (Date.now()
     for (let i = 0; i < 5; i++) assert.strictEqual((await X('POST', '/api/login', { username: 'grandma', password: 'wrong wrong wrong' })).status, 401);
     assert.strictEqual((await X('POST', '/api/login', { username: 'grandma', password: 'another long password' })).status, 429);
     assert.strictEqual((await fetch(base + '/')).status, 200);
-    assert.strictEqual((await fetch(base + '/js/bodymap.js')).status, 200);
+    r = await fetch(base + '/js/bodymap.js'); assert.strictEqual(r.status, 200); assert.strictEqual(r.headers.get('cache-control'), 'no-cache', 'page code is rechecked on every load');
+    assert.strictEqual((await fetch(base + '/js/bodymap.js', { headers: { 'If-None-Match': r.headers.get('etag') } })).status, 304);
     assert.strictEqual((await fetch(base + '/%2e%2e/server.js')).status, 404);
 
     console.log('All tests passed');

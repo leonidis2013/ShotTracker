@@ -1260,7 +1260,12 @@ function serveStatic(req, res, url) {
   if (p === '/' || !path.extname(p)) p = '/index.html';
   const f = path.resolve(PUB, '.' + p);
   if (!f.startsWith(PUB + path.sep) || !fs.existsSync(f) || !fs.statSync(f).isFile()) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('Not found'); }
-  res.writeHead(200, { 'Content-Type': TYPES[path.extname(f)] || 'application/octet-stream', 'Cache-Control': p === '/index.html' || p === '/sw.js' ? 'no-cache' : 'max-age=300' });
+  // The browser may keep a copy but must check it's current on every load (a quick 304 if it is), so a new
+  // version of ShotTracker takes effect on the next reload instead of after a cache timeout.
+  const st = fs.statSync(f), etag = `"${VERSION}-${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
+  const head = { 'Content-Type': TYPES[path.extname(f)] || 'application/octet-stream', 'Cache-Control': 'no-cache', ETag: etag };
+  if (req.headers['if-none-match'] === etag) { res.writeHead(304, head); return res.end(); }
+  res.writeHead(200, head);
   fs.createReadStream(f).pipe(res);
 }
 
